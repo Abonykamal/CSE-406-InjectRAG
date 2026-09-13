@@ -11,9 +11,11 @@ Generation (RAG) pipeline, and a lightweight spotlighting defense.
 | 2105072 | Abony Kamal |
 | 2105089 | Farhana Adri |
 
-> **Status:** design complete, implementation not yet started. The sections below
-> describe the intended system; see [Implementation Plan](#implementation-plan)
-> for what has actually been built.
+> **Status:** planning draft; implementation has not started. Major design choices
+> remain open. See the [replacement implementation plan](plans/draft-plan.md),
+> [project documentation](documentation/README.md), and
+> [actual project status](documentation/project-status.md). The design report is
+> revisable; the overview below describes research intent, not verified behavior.
 
 ---
 
@@ -157,11 +159,12 @@ measure how effectiveness scales with the poisoning budget `N`.
 | **ASR-exclusive** | Fraction of all trials whose response contains `R` **and not** the ground-truth answer |
 | **Clean Accuracy** | Fraction of benign queries answered correctly, measured separately in each condition (clean / attacked / defended) |
 
-ASR is the primary end-to-end metric. Because `R` carries a literal string absent
-from the clean corpus, it cannot be produced without retrieval — so
-**ASR = RSR × ISR**, and RSR/ISR locate a failure at the retrieval or the
-generation stage. ASR-exclusive is the stricter claim that the attack *displaced*
-the correct answer rather than appearing beside it.
+ASR is the primary end-to-end marker metric. **ASR = RSR × ISR** holds only
+when target-marker matches do not occur without attacker content reaching the
+model. Record actual context exposure separately from top-k retrieval. Literal
+marker containment is a proxy: quotation, warnings, and paraphrases require
+care when interpreting compliance or displacement. See the
+[evaluation specification](documentation/evaluation.md) for precise definitions.
 
 ## Defense: Spotlighting
 
@@ -173,9 +176,8 @@ r = LLM( Def(S, q, E(q; D ∪ Γ)) )
 ```
 
 The application marks retrieved documents as untrusted data and instructs the
-model to treat them as reference material rather than instructions. An embedded
-instruction is thereby kept from being read as an authoritative directive, while
-the document remains usable as evidence.
+model to treat them as reference material rather than instructions. The intended effect is to reduce instruction-following from retrieved content
+while preserving its use as evidence; effectiveness must be measured.
 
 Spotlighting adds no extra model, classifier, or external dependency — it changes
 only how retrieved context is formatted and labelled, plus one handling rule in
@@ -189,12 +191,19 @@ attack conditions:
 
 ## Implementation Plan
 
-- [ ] **Phase 1 — RAG system:** ingestion, chunking, embedding, indexing, retrieval, context construction, generation
-- [ ] **Phase 2 — Clean corpus and baseline:** build the legitimate IT corpus, establish baseline performance on the query set
-- [ ] **Phase 3 — Attack implementation:** payload construction and attacker-document creation; verify ingestion, retrieval, end-to-end behaviour
-- [ ] **Phase 4 — Evaluation:** automated measurement of RSR, ISR, ASR, ASR-exclusive, Clean Accuracy
-- [ ] **Phase 5 — Defense:** implement spotlighting, integrate between retrieval and generation
-- [ ] **Phase 6 — Defense evaluation and final testing:** compare defended and undefended runs, analyse failures, verify reproducibility
+The previous phase checklist is superseded by the
+[replacement RAG-first draft](plans/draft-plan.md). It breaks the clean target
+system into dependency-ordered implementation tasks with deliverables,
+acceptance checks, and explicit user decision gates.
+
+Start with the [documentation index](documentation/README.md),
+[proposed architecture](documentation/architecture.md),
+[repository layout](documentation/repository-structure.md), and
+[pending decisions](documentation/decisions.md).
+
+The detailed report is a proposal subject to revision. Its experimental assumptions
+and metric limitations are tracked in the [design review](documentation/design-review.md)
+and [evaluation specification](documentation/evaluation.md).
 
 ## Scope and Ethics
 
@@ -207,4 +216,4 @@ without pointing at anything real.
 
 The attack is documented alongside a working defense; the purpose is to measure
 whether the trust boundary between system instructions and retrieved content
-holds, and to show that a formatting-level mitigation meaningfully restores it.
+holds, and whether a formatting-level mitigation improves it while preserving utility.
