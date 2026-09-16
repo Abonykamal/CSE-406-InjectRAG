@@ -1,5 +1,11 @@
 # Development and implementation-agent workflow
 
+## Session orientation
+
+The root [AGENTS.md](../AGENTS.md) instructs Codex to use the repository's [$orient skill](../.agents/skills/orient/SKILL.md) on the first user message of a new session. It reads the core project context and then the additional documentation relevant to the request. The skill is read-only and does not start implementation by itself.
+
+You can also request `$orient` explicitly to refresh context. Startup behavior relies on Codex loading this repository's `AGENTS.md`; it is an instruction-based workflow, not a background process. If the new skill does not appear in the selector, restart Codex. The root instruction also provides its direct file path.
+
 ## Starting a task
 
 1. Read project status, the relevant accepted decisions, and the task in `plans/draft-plan.md`.
@@ -13,6 +19,16 @@
 Ask before changing language/framework, runtime/provider or resource budget, application delivery scope, repository packaging, corpus admission policy, baseline trust/prompt policy, attacker knowledge, experiment definitions, or accepted performance targets. Prepare the options and available evidence first. Continue independent authorized work while awaiting answers, but do not implement dependent choices.
 
 Routine implementation details within accepted contracts—internal helper names, error wording, and fixture organization—can be resolved by the implementation agent. Discovery of a report fault is expected; record it rather than treating the report as immutable.
+
+## Decision-review handoff
+
+Read the current decision register and later amendments rather than interpreting historical pending notes as current blockers. D04–D08 now have accepted directions; do not reopen those choices. Keep both READMEs, architecture/contracts, evaluation, status, and dependent plan tasks aligned whenever a decision changes. Preserve historical approval rationale while refreshing current summaries. Use the remaining agenda in project status to distinguish unreviewed research issues from routine implementation details. The user prioritizes attack testing and a compact build, with spotlighting as a secondary comparison; excluded defended-clean and cover-only runs must not reappear as requirements. D08 fixes N = 5 admitted attacker tickets with distinct covers spanning the three recovery topics and one shared base instruction/directive; do not reintroduce a budget sweep or treat the earlier nested-set recommendation as approved.
+
+For later attack construction, follow D08 restricted-brief authoring and freeze tickets before victim testing. Do not pass actual development/held-out questions or keys, clean corpus contents, victim prompts/configuration, or victim feedback into the authoring context. No surrogate is selected. Keep observer analysis separate from authoring, retain the brief/freeze provenance, and disclose any known same-team leakage; do not describe an already-informed author as blind.
+
+D08 initial evaluation uses one answer for each of the 30 held-out questions in each selected condition, with operational retries separate. Preserve unfavorable completed answers, report variability limits, and do not add repeated runs or payload variants without an approved scope change. The user has resolved M_a verification as optional future work only. Keep [things to try if time permits](optional-extensions.md) outside required tasks and acceptance gates; do not treat available time or list membership as authorization to run an extension.
+
+D10 approves the application stack and two-service Qdrant layout. Do not reopen FastAPI/plain UI, uv, SQLite, or Qdrant as pending defaults. D11 now closes exact model/runtime selections, version policy and pilot design. Continue application policies next; account quotas, compatibility/pins and actual feasibility are verification work. Stable package patch versions and image digests can be resolved during authorized setup within D11 without reopening model selection; substitutions remain design changes. These approvals authorize documentation alignment, not installs, downloads, scaffolding, live API calls, or paid usage.
 
 ## Documentation responsibilities
 

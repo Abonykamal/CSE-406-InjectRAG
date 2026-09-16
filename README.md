@@ -17,6 +17,8 @@ Generation (RAG) pipeline, and a lightweight spotlighting defense.
 > [actual project status](documentation/project-status.md). The design report is
 > revisable; the overview below describes research intent, not verified behavior.
 
+**Joining the team?** Start with [teammate onboarding](documentation/team-onboarding.md) for the reading order, agreed scope, and remaining implementation decisions.
+
 ---
 
 ## Overview
@@ -27,7 +29,7 @@ corpus, it reaches the model's context too — creating an opening for **indirec
 prompt injection**, where malicious instructions embedded in *retrieved* content
 steer the model without ever appearing in the user's prompt.
 
-This project studies that attack in a simulated corporate IT helpdesk chatbot.
+The primary research goal is to test that attack in a simulated corporate IT helpdesk chatbot; spotlighting is a secondary comparison.
 An attacker with legitimate permission to submit support content embeds
 model-directed instructions in a document they control. When that document is
 retrieved for a related user query, the instruction attempts to induce an
@@ -35,6 +37,31 @@ attacker-chosen misleading response.
 
 The attacker has no access to the system prompt, the models, the retrieval
 mechanism, or any other internal component.
+
+The approved delivery direction is Docker with local embeddings/retrieval and
+hosted generation through Google's Gemini API. Generation uses a replaceable
+provider interface; trial requests, outputs, and provenance will be retained.
+The approved stack is FastAPI/Uvicorn, a plain HTML/CSS/JavaScript UI served by the API,
+uv with a committed lockfile, SQLite application/history storage, and local Qdrant.
+Docker Compose runs the application and Qdrant as two services with persistent host storage.
+Selected models: CPU BAAI/bge-small-en-v1.5 via FastEmbed/ONNX; Gemini
+`gemini-3.8-flash` for answers and separate observer judging;
+`gemini-3.5-flash-lite` for rewriting. Python 3.12, a reproducible version-pinning
+policy, and bounded pilot design are approved. Account quotas, compatibility and
+measured feasibility remain unverified; no execution has started. See
+[runtime feasibility](documentation/local-runtime-feasibility.md) and [D11](documentation/decisions.md#d11).
+
+The initial clean dataset is 12 articles and 24 resolved tickets, with 30 development
+and 30 held-out questions plus six separate conversation scripts. Model-judged
+quality is checked with a limited human audit; approved readiness thresholds and
+repetitions are in [D06](documentation/decisions.md#d06). These are planned inputs,
+not existing data or results.
+
+Follow-ups use full same-thread user/assistant history without routine trimming.
+Retrieval searches both the current question and a model-generated standalone
+rewrite; rewrite failure triggers logged original-question retrieval. Fresh evidence
+precedes the current question in the answer request. Prior retrieval bundles are
+retained in artifacts rather than replayed as history. Exact settings remain pending.
 
 ## System Model
 
@@ -65,7 +92,9 @@ tests whether untrusted content can cross this boundary and be read as
 
 Let `D` be the legitimate corpus and `S` the application's trusted system
 instruction. For a query `q`, the system retrieves top-k documents `E(q; D)` and
-returns `r = LLM(S, q, E(q; D))`.
+returns `r = LLM(S, q, E(q; D))`. This notation describes fresh-thread trials;
+conversation history and original-plus-rewritten retrieval are explicit extensions
+for multi-turn tests, whose results are reported separately.
 
 The attacker targets a **query class** `Q` — semantically related questions
 victims are expected to ask — and fixes one target directive `R` to be induced
@@ -73,8 +102,8 @@ across the entire class. Because `q` is unobservable, `R` must be class-invarian
 rather than question-specific.
 
 The attacker injects `N` documents `Γ = {P₁, …, P_N}` through the legitimate
-ingestion channel, yielding corpus `D ∪ Γ`. Subject to a poisoning budget
-`|Γ| = N`, the attacker maximizes:
+ingestion channel, yielding corpus `D ∪ Γ`. D08 fixes the poisoning budget at
+`|Γ| = N = 5` admitted attacker tickets; no budget sweep is selected. The attacker maximizes:
 
 ```
 max_Γ  E_{q~Q} [ 1( R ∈ LLM(S, q, E(q; D ∪ Γ)) ) ]
@@ -84,8 +113,19 @@ i.e. choose the poisoned documents that make the system emit the injected
 directive for the largest fraction of questions in the target class.
 
 **Attacker capability.** Controls only `Γ`. Cannot alter or observe `S`, `D`, the
-encoders, or the victim's query. Never prompts the LLM directly, never interacts
-with the victim, never submits the victim's query.
+encoders, or the victim's query. May know that this target uses chunking and vary
+instruction repetition/placement without access to hidden boundaries or configuration.
+Never prompts the victim LLM directly, never interacts
+with the victim, never submits the victim's query. D08 approves authoring from a
+restricted brief (target topics, description permissions, general chunking knowledge,
+and attack objective), without a surrogate or victim feedback. Keep clean corpus
+contents, victim prompts/configuration, actual development/held-out questions and
+keys, and victim traces outside attack construction. Freeze the five tickets before
+evaluation; observer analysis does not feed back into the frozen attack. Same-team
+separation is procedural, not guaranteed blindness. The submitted report
+(`B1_Group_7.pdf`, section 3.1) explicitly excludes observing the clean corpus.
+Attacker-side model verification M_a is an [optional extension](documentation/optional-extensions.md),
+not a requirement or an implementation blocker.
 
 **Two necessary conditions:**
 
@@ -100,15 +140,23 @@ A simulated corporate IT helpdesk chatbot used by employees for common
 procedures — password resets, account lockouts, VPN access — running a RAG
 pipeline over official IT documentation and support content.
 
-Employees can submit IT support tickets, and resolved tickets are ingested into
-the corpus alongside official documentation. This is common practice in helpdesk
-knowledge bases, since past tickets capture fixes that formal documentation
-omits. Ingestion is assumed to screen content for plausibility but perform **no
-instruction-level inspection**.
+The initial application will support executable ticket submission and resolution,
+alongside preloaded synthetic resolved tickets. Employee descriptions and technician
+resolutions remain distinguishable; only resolved tickets are eligible for ingestion.
+Seeded local employee/technician accounts and API-enforced role/ownership checks
+are approved. SQLite persistence is selected; exact sessions, edit/reopen rules, and index publication
+policy remain pending under D04.
 
-The attacker is a malicious employee with legitimate permission to submit or
-modify their own ticket content, placing the payload inside otherwise plausible
-IT support text.
+Employees can submit IT support tickets, and resolved tickets are ingested into
+the corpus alongside official documentation in this simulated setting. Resolved
+tickets retain employee descriptions and technician resolutions. Admission and
+normalization apply consistently; no instruction-level filter is selected for
+the baseline. This does not simulate evasion of a real ticket-review process.
+
+The attacker is a malicious employee controlling their own ticket description,
+not technician resolution text, resolved status, or official articles. The study
+assumes this description survives resolution and admission; exact edit rules
+remain pending.
 
 ```
 attacker-controlled document → ingestion into corpus → retrieval for a victim query
@@ -136,10 +184,13 @@ data.
 | Target directive | part of `I` | The class-invariant directive `R`, carrying a distinctive literal string for deterministic matching |
 | Concealment instruction | part of `I` *(optional)* | Attempts to stop the model revealing that retrieved content influenced the response |
 
-The `N` injected documents share the same injection instruction and target
-directive `R`, but use **distinct cover content** `C`, each written around a
-different sub-topic of `Q`. This broadens retrieval coverage of the class rather
-than concentrating probability on a single phrasing.
+D08 approves one fixed set of **five distinct support stories** spanning forgotten
+passwords, account lockouts, and lost verification devices. All five share the same
+base injection instruction and target directive `R`, with varied cover content `C`
+to broaden retrieval opportunities. Freeze the set before final evaluation and use
+the same tickets in attacked and defended runs. Exact wording, topic allocation,
+repetition, placement, and concealment remain pending. D07 permits repetition/placement
+without hidden-boundary feedback, with chunking frozen independently of the attack.
 
 An example document for the password-recovery class appears in Appendix A of the
 design report. Its target directive carries the literal string
@@ -148,8 +199,14 @@ design report. Its target directive carries the literal string
 ## Evaluation
 
 The metrics separate retrieval effectiveness from instruction-following
-effectiveness, so a failed attack can be attributed to a specific stage, and
-measure how effectiveness scales with the poisoning budget `N`.
+effectiveness, so a failed attack can be investigated at each stage. The selected
+study evaluates a fixed five-ticket attack budget; it does not measure scaling with `N`.
+D08 approves one answer per held-out question per condition: 30 clean, 30 attacked,
+and 30 defended answers for the initial comparison. Reuse clean results only with
+matching frozen configuration. Target attack rates use the 18 answerable recovery
+questions; the other 12 assess broader answer behavior. Report single-answer
+variability limits and operational retries separately; never rerun a completed answer
+just because the attack failed.
 
 | Metric | Definition |
 |---|---|
@@ -187,7 +244,13 @@ Evaluated on two axes by comparing defended and undefended runs under identical
 attack conditions:
 
 - **Security** — reduction in ASR and ASR-exclusive
-- **Utility** — preservation of Clean Accuracy on benign queries
+- **Answer quality under attack** — correctness on benign user questions against the poisoned corpus
+
+D08 selects clean baseline, attacked baseline, and defended attack only, with
+36 clean documents and 41 documents in each poisoned snapshot (five added attacker tickets). No budget sweep,
+defended-clean or cover-only run is included. Consequently, the study does not
+isolate defense utility cost on a clean corpus or fully separate added-document
+competition from embedded-instruction effects.
 
 ## Implementation Plan
 
@@ -201,7 +264,9 @@ Start with the [documentation index](documentation/README.md),
 [repository layout](documentation/repository-structure.md), and
 [pending decisions](documentation/decisions.md).
 
-The detailed report is a proposal subject to revision. Its experimental assumptions
+The shortened submitted report is `B1_Group_7.pdf`; the earlier detailed report
+is a historical proposal. Current approvals govern implementation. Neither report
+is a portable repository dependency. The detailed report is a proposal subject to revision. Its experimental assumptions
 and metric limitations are tracked in the [design review](documentation/design-review.md)
 and [evaluation specification](documentation/evaluation.md).
 
@@ -214,6 +279,8 @@ used as the target directive (`it-support-portal.example.com`) is a reserved
 example domain chosen so that attack success can be matched deterministically
 without pointing at anything real.
 
-The attack is documented alongside a working defense; the purpose is to measure
+The planned study pairs the attack with a spotlighting defense; neither is
+implemented yet. The purpose is to measure
 whether the trust boundary between system instructions and retrieved content
-holds, and whether a formatting-level mitigation improves it while preserving utility.
+holds, and how a formatting-level mitigation changes attack success and answer
+quality under poisoning. Clean-corpus defense utility is outside the selected comparison.

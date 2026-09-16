@@ -1,6 +1,6 @@
 # InjectRAG — replacement implementation draft
 
-Date: 2026-09-13. Status: **draft; major design decisions pending**.
+Created: 2026-09-13. Updated: 2026-09-17. Status: **approved design directions incorporated; remaining implementation/research details pending**.
 
 This plan supersedes the previous README implementation checklist and does not adopt the report's implementation phases as a binding plan. It uses the detailed report's research intent while reviewing its assumptions. The immediate deliverable is a functioning, inspectable **clean RAG target** that later attack and defense experiments can use without rewriting the application.
 
@@ -12,20 +12,24 @@ The first implementation must ingest synthetic helpdesk knowledge, normalize and
 
 A small clean corpus belongs early in the build: ingestion and retrieval cannot be validated without representative inputs. Expand and freeze that corpus later. The first system is not complete merely because a chat response is returned.
 
-Defer attack payload generation, attacker-side optimization, poisoning-budget sweeps, spotlighting, full security scoring, production ticket authentication, and deployment. D01 is accepted: the first working application includes an API and a simple chat UI. A CLI alone does not satisfy this scope. Preserve extension points for experiments without implementing those later systems prematurely.
+Defer attack payload generation, attacker-side optimization, spotlighting, full security scoring, production identity-provider integration and external deployment. Docker delivery and local account/role enforcement are approved initial scope. D01 is accepted: the first working application includes an API and a simple chat UI. A CLI alone does not satisfy this scope. Preserve extension points for experiments without implementing those later systems prematurely.
 
 ## 2. Decisions before dependent work
 
 | Gate | User input needed | Work that may proceed before resolution |
 |---|---|---|
-| D01: delivery | API + simple chat UI accepted; question-scoped memory accepted (D09); Python-served UI delivery pending | API/UI contract and task planning |
-| D02: resources and stack | Local preferred on Linux laptop; exact models/runtime and feasibility resource limits pending | Hardware inventory recorded; compare candidates without assuming Iris acceleration |
-| D03: packaging | One Python project accepted; framework/tooling details pending | Refine separate packages and shared contracts |
-| D04: corpus | Initial topics, synthetic scope, resolved/submitted ticket admission | Corpus schema and authoring checklist |
-| D05: baseline behavior | Prompt, citation/abstention policy, context treatment, history storage/budget and follow-up retrieval | Trace design and candidate policy review |
-| D06: readiness | Corpus/query counts, split, quality/resource thresholds and repetitions | Metric definitions and scoring examples |
+| D01: delivery | API + simple chat UI accepted; question-scoped memory accepted (D09); FastAPI-served plain UI and complete responses accepted (D10) | API/UI contract and task planning |
+| D02: resources and stack | D10 stack and D11 models/runtime/version policy/pilot bounds accepted; account quotas and feasibility unverified | Read-only account/compatibility planning; no execution authorization |
+| D03: packaging | One Python project accepted; FastAPI/Uvicorn and uv/uv.lock accepted (D10); Python 3.12 and version-pinning policy accepted (D11) | Refine separate packages and shared contracts |
+| D04: corpus/workflow | Corpus and resolved-ticket scope accepted; employee/technician API-enforced roles accepted; SQLite storage accepted (D10); lifecycle/session/schema and publication details pending | Corpus schema and workflow contract planning |
+| D05: baseline behavior | Grounded answers/citations/missing-evidence behavior accepted; reference/system separation and later combined spotlighting intervention accepted; original-plus-rewritten follow-up retrieval accepted; full history without routine trimming accepted; SQLite history storage accepted (D10); exact syntax, retention/resume/overflow, fusion and rewrite validation pending; logged original-question fallback approved | Trace design and candidate policy review |
+| D06: readiness | Automated checks/model judge/limited human audit accepted; 36 documents, 30 development + 30 held-out questions, six conversation scripts, and initial 10-answer audit plus flags accepted; 22/24 evidence coverage, 21/24 fully correct supported answers, 3/3 unsupported and 3/3 ambiguous handling, 30/30 completion, and five development questions × three pilot repeats accepted; D11 judge and pilot resource/retry bounds accepted; full-run policies pending | Metric definitions and scoring examples |
 
-D01 and D03 are approved; D02 has an accepted local preference. D09 approves question-scoped memory. UI delivery and initial corpus questions remain pending. Bring D04–D06 as a focused follow-up before their tasks; do not turn them into silent defaults. D07/D08 concern later attack-study validity and do not block ordinary clean ingestion/retrieval.
+D01 and D03 are approved; D02 selects Gemini generation with local embeddings/retrieval and Docker delivery. D09 approves question-scoped memory. D10 settles API/UI delivery, uv, SQLite, local Qdrant, and the two-service Compose layout; ticket-workflow details remain pending; D04 corpus scope is accepted. Resolve only the remaining D04–D06 details before dependent tasks; preserve their accepted choices. D07 main-study boundary and D08 three-condition scope with fixed N = 5 are accepted; no budget sweep is selected. The five-ticket distinct-cover/shared-instruction composition is approved. Restricted-brief authoring followed by frozen evaluation is approved, without a surrogate or victim feedback during construction. Initial repetitions are approved at one answer per held-out question per condition. Exact later payload details and variants remain open and do not block ordinary clean ingestion/retrieval. M_a verification is optional future work only, not a gate.
+
+D11 closes stack/model selections, version policy and bounded pilot design. Next review application policies; account quotas, exact stable pins/compatibility and measured feasibility remain verification work. D10/D11 approve design only: no installs, downloads, scaffolding, live API calls, or paid usage yet.
+
+D11 selects BAAI/bge-small-en-v1.5 through FastEmbed/ONNX Runtime on CPU, Gemini gemini-3.8-flash for answers and separate observer judging, and gemini-3.5-flash-lite for independently configured rewriting. Use google-genai, Python 3.12, low thinking for answers/judging and minimal thinking for rewriting. Resolve compatible stable dependencies during authorized setup, commit exact uv.lock versions, pin Docker images by digest, and record embedding revisions/hashes before baseline freeze. Pilot design: 15 repeatability answers, 15 answer judgments, five fabricated judge cases and five rewrite fixtures = 40 planned inference calls; at most five retry attempts and 100 total API calls including auxiliary requests. See [D11](../documentation/decisions.md#d11) for all token/time/memory/concurrency bounds. Pilot approval does not set the full-study aggregate budget or replace D06 readiness/script checks.
 
 ## 3. Proposed organization
 
@@ -38,8 +42,10 @@ Create application directories only when their tasks start. Do not create a seco
 ```text
 R00 decisions → R01 feasibility → R02 scaffold → R03 contracts/config
 R03 + D04 → R04 seed corpus → R05 ingestion → R06 chunking
+R03 + D04 workflow details → R05a ticket lifecycle → R13a/R13b delivery
 R01 + R03 → R07 embeddings
 R06 + R07 → R08 index → R09 retrieval
+R11 provider interface + approved rewrite configuration → R09 live follow-up rewriting
 R03 + D05 + selected model limits → R10 context
 R01 + R03 → R11 generation adapter
 R03 → R12 trace infrastructure
@@ -49,7 +55,7 @@ R04 + D06 → R15 complete corpus/query set and scorer
 R14 + R15 → R16 baseline pilot/freeze → R17 handoff
 ```
 
-This is dependency information, not a request to spawn agents. Tasks can be implemented in dependency order by one implementation agent. Application tasks remain **not implemented**. R00 is in progress: D01/D03 accepted and D02 direction recorded; R01 has hardware inventory only, not a completed feasibility check.
+This is dependency information, not a request to spawn agents. Tasks can be implemented in dependency order by one implementation agent. Application tasks remain **not implemented**. R00 is in progress: D10/D11 close stack/model design, while application/research policies remain. R01 has hardware/source inventory and official documentation review only, not a completed account/feasibility check.
 
 ## 5. Agent-executable tasks
 
@@ -57,31 +63,31 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Prerequisites:** read the report review, draft architecture, and decision register.
 
-1. Preserve the accepted D01/D03 answers and local D02 preference; resolve only remaining details, without re-asking approved choices.
+1. Preserve the accepted D01/D03 answers and revised hosted-generation D02 direction; resolve only remaining details, without re-asking approved choices.
 2. Record constraints, selected direction, and any unresolved exact technology choice.
-3. Present D04–D06 before dependent tasks, with concrete corpus/prompt/readiness options.
+3. Resolve remaining D04–D06 implementation/resource settings without re-asking approved corpus, prompt/history, scoring, sample-size, and readiness choices.
 4. Create accepted decision records only for actual approvals; amend downstream paths and scope accordingly.
 
 **Deliverables:** decision records and updated plan/status. **Acceptance:** an agent can identify which choices are approved and which tasks remain gated. **Stop condition:** do not scaffold an unapproved language or invoke an unapproved paid runtime.
 
-### R01 — Establish resource feasibility and select the minimal runtime
+### R01 — Verify the selected runtime and resource feasibility
 
-**Prerequisites:** D02 direction and permission scope; D03 language direction.
+**Prerequisites:** D10/D11 selections and separate execution authorization for provisioning/live work; remaining dependent policy settings.
 
 1. Use the [hardware inventory](../documentation/local-runtime-feasibility.md), rechecking dynamic memory/disk before a pilot. Inspect runtime tooling without dumping credentials.
-2. Compare a small set of local embedding, generation, indexing, and package-tool choices against those resources and the API/UI scope. Plan a CPU-compatible pilot; treat Iris acceleration as unverified until tested. Measure memory with browser, API, embeddings, and generator present, plus latency under a bounded request policy. Hosted fallback requires a new user decision.
-3. Propose exact candidates, provisioning size, estimated cost, and a bounded pilot; obtain approval for major selections and resource use.
-4. Run a tiny embedding batch and one grounded generation request under the approved setup; record observed latency, dimensions, context limits, and any provisioning failures.
+2. Verify D11 CPU BGE-small/FastEmbed/ONNX with the D10 FastAPI/SQLite/Qdrant two-service stack; verify official model availability and published free-tier limits separately from actual account quotas. Measure local application/embedding/index memory and end-to-end API latency under bounded concurrency. Local generation benchmarking is not required; paid usage and silent fallback are not approved.
+3. Preserve D11 model selections and pilot limits. Resolve compatible stable dependencies for Python 3.12, pin image digests and embedding artifacts under the approved policy during authorized setup. Record provisioning sizes and account quotas before live work; substitutions require review.
+4. After execution authorization, run a tiny embedding batch and an explicitly budgeted grounded-generation smoke request; record latency, dimensions, context limits and provisioning failures. Allocate early smoke calls explicitly without silently expanding D11's planned 40-call pilot; the full repeatability/judge/rewrite pilot belongs after pipeline/scorer integration.
 5. Record exact versions/revisions and limitations. If infeasible, bring evidence and alternatives back before changing runtime strategy.
 
 **Deliverables:** accepted D02 details, feasibility note in documentation, dependency/version inputs. **Acceptance:** at least one real embedding and generation path works within approved constraints; mocks are not feasibility evidence.
 
 ### R02 — Scaffold the approved project and development environment
 
-**Prerequisites:** D01/D03 accepted; R01 runtime selection.
+**Prerequisites:** D10/D11 design accepted; R01 compatibility/resource verification and explicit implementation authorization.
 
 1. Create the minimal package/entry-point structure from the approved layout.
-2. Add dependency declaration and selected lockfile; separate routine testing dependencies from optional live-model integrations where useful.
+2. Implement D10 Docker delivery with one custom application image and the Qdrant image as two Compose services. Pin approved versions and define separate persistent host mounts for application state, Qdrant data, snapshots/results, and model cache. Reuse the application image for one-off research jobs. Add pyproject.toml and a committed uv.lock with locked installation and build/start validation; separate routine testing dependencies from optional live-model integrations where useful.
 3. Add ignore rules for generated artifacts, secrets, caches, and weights; add environment-variable placeholders only.
 4. Configure the project's formatter/linter and test runner without adding unused frameworks.
 5. Add an import/help smoke check and document the actual setup commands in `documentation/local-development.md`.
@@ -124,6 +130,18 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Deliverables:** ingestion adapter/module and inspectable normalized outputs. **Acceptance:** unchanged input produces identical logical documents; malformed/duplicate/empty records cannot silently enter a supposedly complete corpus; content survives normalization as specified.
 
+### R05a — Implement executable ticket submission and resolution
+
+**Prerequisites:** R03, approved D04 lifecycle/session/persistence details; R05 for admission integration.
+
+1. Implement submission and technician resolution with distinct employee description and resolution fields. Use seeded local employee/technician accounts and API-enforced roles; specify session mechanism, edit/reopen behavior, and SQLite schemas/transactions first; employee actions cannot set technician resolution or resolved status.
+2. Keep unresolved tickets outside the searchable corpus. Route resolved tickets and preloaded resolved-ticket records through common eligibility, normalization, identity, and provenance rules.
+3. Implement the approved index publication policy. Distinguish resolved status from searchable status; preserve frozen experiment snapshots.
+4. Expose submission, inspection, and resolution through the API/browser UI in R13a/R13b using the approved actor representation.
+5. Verify state transitions, unresolved exclusion, content preservation, seed/workflow equivalence, and publication failures/retries.
+
+**Deliverables:** ticket workflow, seed import integration, and lifecycle/actor/publication contract. **Acceptance:** submit, resolve, publish, and retrieve a ticket through the real pipeline; unresolved content stays out of the index and employee controls cannot modify technician-only fields. Equivalent seeded tickets yield equivalent corpus documents. Verify authenticated role and ticket-ownership checks directly through the API, including employee resolution denial. Registration and email integration are outside initial scope.
+
 ### R06 — Implement deterministic chunking and provenance
 
 **Prerequisites:** R05; tokenizer/splitter choice from R01/R03.
@@ -140,7 +158,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Prerequisites:** R01/R03 and provider resource approval.
 
-1. Define separate document-batch and query embedding operations to accommodate model-specific input conventions.
+1. Define document-batch and query embedding operations for BAAI/bge-small-en-v1.5 through CPU FastEmbed/ONNX, with explicit input conventions. Enforce its 512-token input limit including prefixes/special tokens; validate 384-dimensional vectors.
 2. Implement the selected adapter with bounded batches, explicit error handling, and recorded model revision/dimension.
 3. Validate finite vectors and dimensions; apply the approved normalization consistently.
 4. If caching is needed, key by text hash, model revision, and embedding settings; otherwise defer caching.
@@ -152,8 +170,8 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Prerequisites:** R06/R07.
 
-1. Implement the selected index adapter with explicit similarity metric and score meaning.
-2. Build from a complete chunk manifest into temporary output, then publish a ready snapshot.
+1. Implement the local Qdrant index adapter with explicit approved similarity/search settings, score meaning, and point-to-chunk mapping; retain observer-only metadata outside retrieval payloads.
+2. Build from a complete chunk manifest into an isolated Qdrant collection, then publish a ready snapshot under the approved publication policy. Preserve frozen collections; Qdrant does not make them immutable automatically.
 3. Persist vector-to-chunk mappings and the full compatibility manifest.
 4. Load snapshots only after validating model, dimension, normalization, and corpus/preprocessing identities.
 5. Support a clean rebuild without duplicate insertion or modification of a frozen prior snapshot.
@@ -162,13 +180,13 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 ### R09 — Implement inspectable retrieval
 
-**Prerequisites:** R08 and query embedding adapter.
+**Prerequisites:** R08 and query embedding adapter; R11 provider interface and approved rewrite configuration for live follow-up rewriting (fixtures may precede it).
 
 1. Embed a question using the approved query mode and retrieve configured top-k chunks.
 2. Define score direction, ties, repeated-document policy, empty-index behavior, and top-k exceeding collection size.
 3. Return typed ranked hits with chunk/document identity and text.
 4. Expose a retrieval-only inspection command or equivalent approved interface.
-5. Measure relevant-source presence on seed development questions; inspect misses without accessing held-out answers for tuning. Include elliptical follow-ups and specify/approve how retrieval uses thread context before adding rewriting or another retrieval-policy change.
+5. Measure relevant-source presence on seed development questions; inspect misses without accessing held-out answers for tuning. Implement D05 original-plus-rewritten follow-up retrieval using a separately configured rewrite adapter and full same-thread user/assistant history by default. Search both versions, merge/deduplicate within a fixed evidence budget, and trace both rankings. First turns use the original question directly. Validate corrections, topic shifts, ambiguous references, and prior-answer contamination; agree exact fusion and rewrite validation before freezing. On rewrite failure after bounded retries, trace the failure and retrieve using the original question only; preserve fallback identity in results and scoring. Use fake rewrite responses for plumbing; real rewrite validation requires the approved provider adapter/resource setup.
 
 **Deliverables:** retriever and inspection output. **Acceptance:** a known-vector test establishes ranking independently of the implementation; real seed queries produce traces that identify evidence and ranking without ground-truth-assisted selection.
 
@@ -178,7 +196,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 1. Version the approved baseline system prompt and ordinary source rendering format.
 2. Assemble trusted instructions, the current thread’s selected prior user/assistant turns, current question, and newly retrieved evidence in explicit provider roles; corpus text and prior answers cannot become system instructions.
-3. Calculate the available input budget including selected history, formatting, query, output reserve, and margin. Implement the approved history limit/overflow policy and log included/omitted turn IDs.
+3. Calculate the available input budget including selected history, formatting, query, output reserve, and margin. Preserve full history by default without routine trimming/summarization; place fresh evidence after history and the current original question last. Do not replay old retrieval bundles. Specify overflow handling before implementation, check each model limit, and log exact included/omitted turn IDs.
 4. Apply approved inclusion/exclusion policy in rank order; record exact included text and excluded IDs/reasons.
 5. Define no-evidence and oversized-query behavior; reserve a narrow context-builder interface for later defenses.
 
@@ -188,7 +206,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Prerequisites:** R01/R03 and approved resource budget.
 
-1. Implement the selected generation adapter behind a small request/result interface.
+1. Implement Gemini through google-genai behind a provider-independent request/result interface, using D11 gemini-3.8-flash answers and independently configured gemini-3.5-flash-lite rewriting with the approved thinking levels. Map roles and supported settings explicitly. Keep provider code out of retrieval and scoring; replacements require their own adapter validation and baseline.
 2. Pass resolved model, temperature, output cap, and supported reproducibility settings explicitly.
 3. Capture response text, finish reason, available usage, latency, and reported model identity.
 4. Implement bounded timeout/retry behavior and classify provider errors and truncated responses.
@@ -201,7 +219,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 **Prerequisites:** R03; can use fixtures before full pipeline integration.
 
 1. Create run/trial identifiers and immutable resolved manifest records.
-2. Serialize stage timings, ranked hits, exact final messages, inclusion decisions, generation outcomes, and retry counts.
+2. Serialize stage timings, ranked hits, exact final messages, inclusion decisions, sanitized provider request bodies, returned responses/metadata, and each attempt/error. Persist artifacts outside disposable container state; exclude credentials and session secrets.
 3. Link each trial to corpus/index/config/prompt/model/query identities.
 4. Make partial/failed runs inspectable, and prevent accidental overwrite of prior results.
 5. Keep observer labels in separate joined records and protect credentials from logging.
@@ -222,27 +240,27 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 ### R13a — Expose the pipeline through the API
 
-**Prerequisites:** R13, approved Python API framework and request concurrency policy.
+**Prerequisites:** R13, R05a, D10 FastAPI/Uvicorn and approved request concurrency policy.
 
-1. Define versioned thread/turn/question/answer/error schemas with answer text, source references, and request ID; keep observer-only labels outside public responses. Implement thread creation/reset and isolated history using the agreed storage/retention policy.
+1. Define versioned thread/turn/question/answer/error schemas with answer text, source references, and request ID; keep observer-only labels outside public responses. Implement thread creation/reset and SQLite-backed isolated history using the agreed retention/resume policy.
 2. Implement a question endpoint and readiness endpoint; readiness must distinguish an unbuilt index or unavailable model from a ready application.
 3. Validate request size and shape before inference. Map operational failures into documented non-success HTTP responses.
-4. Load/reuse runtime resources deliberately and apply the approved bounded concurrency/queue policy; do not duplicate model instances unintentionally per request or worker.
-5. Document the endpoint contract and startup/shutdown behavior; test with deterministic adapters and a real local model under the approved pilot.
+4. Start with one Uvicorn worker per D10, load/reuse runtime resources deliberately, keep blocking embedding work off the event loop, and apply the approved bounded concurrency/queue policy; do not duplicate model instances unintentionally per request or worker.
+5. Document the endpoint contract and startup/shutdown behavior; test with deterministic adapters and local embeddings plus real Gemini generation under the approved free-tier pilot.
 
-**Deliverables:** API package and `documentation/api.md`. **Acceptance:** an HTTP request traverses the real shared pipeline; invalid input, unavailable runtime, and overload have explicit outcomes; a slow generation does not prevent readiness checks. Measure memory and latency rather than assuming concurrent inference is feasible.
+**Deliverables:** API package including ticket submission/resolution endpoints and `documentation/api.md`. **Acceptance:** an HTTP request traverses the real shared pipeline; invalid input, unavailable runtime, and overload have explicit outcomes; a slow generation does not prevent readiness checks. Measure memory and latency rather than assuming concurrent inference is feasible.
 
 ### R13b — Build and integrate the simple browser chat UI
 
-**Prerequisites:** R13a; approved UI delivery and detailed history policy implementing D09.
+**Prerequisites:** R13a and R05a; D10 plain API-served UI and detailed history policy implementing D09.
 
-1. Create an accessible question form, transcript, loading indicator, answer panel, and source references.
+1. Create FastAPI-served plain HTML/CSS/JavaScript assets with an accessible question form, transcript, loading indicator, answer panel, and source references. Use fetch and complete responses; streaming is deferred by D10.
 2. Call the API; prevent accidental duplicate submission, preserve the question on error, and show actionable failure/retry states.
 3. Render model/source text safely as content. Link only through the approved source-link policy; do not interpret model text as executable HTML.
 4. Keep follow-ups in the active question thread, supplying prior turns to the model through the API. Add “New question” to begin a fresh thread; do not carry old turns into it or infer topic changes automatically.
 5. Verify keyboard submission/focus, narrow-screen layout, empty input, delayed answer, API failure, and successful source display in a browser. Document actual launch and usage steps.
 
-**Deliverables:** integrated chat UI and browser validation record. **Acceptance:** a user can launch the documented app, ask a question in the browser, see an answer and sources, and recover from an error; the resulting trace identifies the same API request. Mocked UI checks alone do not satisfy the real RAG integration check.
+**Deliverables:** integrated chat and ticket submission/resolution UI with browser validation record. **Acceptance:** a user can launch the documented app, ask a question in the browser, see an answer and sources, and recover from an error; the resulting trace identifies the same API request. Mocked UI checks alone do not satisfy the real RAG integration check.
 
 ### R14 — Validate end-to-end failure handling and isolation
 
@@ -262,7 +280,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 1. Expand synthetic corpus and questions to approved counts and topic distribution using the canonical policy.
 2. Review answer keys, document relevance, unsupported cases, and paraphrase-family split boundaries.
-3. Implement clean retrieval relevance, marker containment, answer-rubric recording, and completion/failure reporting.
+3. Implement automated evidence/citation checks, separate marker containment, and observer-only model judging with the approved rubric. Retain judge artifacts/errors and limited human-audit selections/corrections; report unscored judgments explicitly. Use the approved initial 10-answer audit plus flagged cases; D11 selects gemini-3.8-flash with low thinking and pilot usage bounds; rubric implementation, full-run budgets, account verification and execution authorization still precede live scoring. Disclose shared answer/judge-model limitations.
 4. Test scoring with fabricated responses containing warnings, both markers, missing markers, paraphrases, and errors.
 5. Freeze held-out evaluation inputs with hashes; keep them outside attacker-side development material and document the procedural limitation. Use fresh threads for independent trials and a separate scripted multi-turn set to test D09; freeze turn order and report those results separately.
 
@@ -272,7 +290,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 
 **Prerequisites:** R14/R15 and approved readiness/resource thresholds.
 
-1. Run the full clean pipeline on development questions and approved repetitions.
+1. Run the D11 bounded pilot after execution authorization: five development questions × three answers, judge those 15 outputs, five fabricated judge-validation cases and five rewrite fixtures. Enforce all cumulative API/retry/token/time/memory bounds. This does not replace the six conversation scripts or authorize additional full-development/held-out aggregate usage; settle those execution budgets separately.
 2. Inspect retrieval misses, evidence truncation, wrong answers, unsupported answers, latency, resource use, and output variability.
 3. Adjust only approved development parameters; seek approval for major design changes and record rationale.
 4. Freeze resolved configuration, prompts, corpus, query set, model/dependency identities, and index manifest.
@@ -289,7 +307,7 @@ This is dependency information, not a request to spawn agents. Tasks can be impl
 2. Check that committed inputs and manifests identify every required external dependency and model provisioning step.
 3. Update README, architecture, status, contracts, and decisions to describe the actual implementation.
 4. Publish an internal handoff note listing public pipeline interfaces, frozen baseline identifiers, observer trace fields, and remaining limitations.
-5. Prepare the next detailed attack/defense plan, resolving D07/D08 before implementing those decisions.
+5. Prepare the next detailed attack/defense plan using accepted D07/D08 scope: fixed N = 5, distinct covers sharing one base instruction/directive, and restricted-brief authoring followed by frozen evaluation without a surrogate or victim feedback. Use the approved one-answer-per-held-out-question-per-condition policy. Resolve remaining payload/variant details before dependent implementation. M_a verification belongs to the optional-extension list and is not a prerequisite.
 
 **Deliverables:** verified reproduction guide and completed clean-target handoff. **Acceptance:** another implementation agent can run the baseline and diagnose an individual trial without undocumented manual edits or access to the original Downloads PDF.
 
@@ -301,8 +319,14 @@ M1 corresponds to R08, M2 to R09, M3 to R14, and M4 to R17. A successful mock te
 
 ## 7. Later research roadmap — deliberately not an attack implementation specification
 
-After M4, resolve attacker knowledge/chunking and comparison-design questions. Then detail separate tasks for attacker-controlled ticket ingestion into derived snapshots, bounded attacker-side verification using only permitted information, frozen-query experiment orchestration, exposure-aware scoring, and spotlighting comparison with defended-clean utility runs.
+Attack testing is the primary research goal; spotlighting is the secondary comparison. After M4, implement the accepted D07 knowledge/chunking boundary and resolve remaining D08 comparison-design questions. Consider instruction repetition and placement within attacker-owned descriptions as explicit variants, without hidden victim-boundary tuning; record length, chunk count, and actual instruction exposure to expose confounds. The document budget is fixed at five admitted attacker tickets; no budget sweep is selected. Use one fixed set of five distinct support stories spanning all three recovery topics and sharing the same base instruction and target directive. Freeze the set before final evaluation. Exact payload text, topic allocation, instruction repetition, placement, concealment, and variant count remain pending. M_a verification is optional future work under the shortened submitted-report scope, not a required restoration. Then detail separate tasks for attacker-controlled ticket ingestion into derived snapshots, restricted-brief authoring and authoring-provenance checks without victim feedback or a surrogate, frozen-query experiment orchestration, exposure-aware scoring, and the D08 three-condition comparison (clean baseline, attacked baseline, defended attack); no defended-clean run.
 
-Preserve the clean snapshot and normal victim configuration. Implement the same admission path for attacker content; keep experiment labels outside the victim. Include a cover-only control if approved and audit whether instruction spans and correct evidence actually reached generation. Any change to threat model, baseline prompts, budget construction, or scoring claims requires a documented decision.
+The attack author receives target topics, description permissions, general chunking knowledge, and the attack objective, and may invent example questions. Withhold clean corpus contents, victim prompts/configuration, actual development/held-out questions and keys, and victim traces from construction. Freeze tickets before victim testing; preserve the brief, supplied-material identities, ticket hashes/freeze time, and known leakage. Observer analysis must not guide revisions to the frozen attack. Disclose procedural same-team separation and non-adaptive scope.
+
+Run the initial study once per held-out question per condition: 30 clean, 30 attacked, and 30 defended logical outcomes in fresh threads. Reuse clean baseline outcomes only with matching frozen configuration (60 additional attacked/defended answer generations, excluding judging/retries). Target attack rates use the 18 answerable recovery questions; assess the other 12 separately. Preserve all operational attempts and missing pairs, never repeat a completed answer to obtain a desired attack result, and disclose the single-answer variability limitation. The clean repeatability pilot remains unchanged; no extra payload variants or conversation-script execution counts are selected here.
+
+Preserve the 36-document clean snapshot and normal victim configuration. Each poisoned snapshot adds exactly five admitted attacker tickets, for 41 documents; matched attacked/defended runs use the same snapshot. Count documents rather than chunks or instruction repetitions, and make no document-count scaling claim. Implement the same admission path for attacker content; keep experiment labels outside the victim. D08 excludes cover-only and defended-clean conditions; audit whether instruction spans and correct evidence actually reached generation and report the resulting attribution/utility limitations. Any change to threat model, baseline prompts, budget construction, or scoring claims requires a documented decision.
+
+Optional research ideas are maintained in [things to try if time permits](../documentation/optional-extensions.md). M_a verification is explicitly outside required delivery. The other list entries are proposals, not approved extra runs; none adds an implementation dependency or completion gate.
 
 The report's desired outcome is a hypothesis. A useful clean RAG that resists an attempted injection remains a valid target and result; do not weaken it to force the expected outcome.

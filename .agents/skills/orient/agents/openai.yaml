@@ -1,0 +1,6 @@
+interface:
+  display_name: "Orient to InjectRAG"
+  short_description: "Load InjectRAG context at session startup"
+  default_prompt: "Use $orient to read the current InjectRAG documentation and decisions before continuing my task."
+policy:
+  allow_implicit_invocation: true
