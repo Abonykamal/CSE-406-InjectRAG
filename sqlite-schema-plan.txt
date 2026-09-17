@@ -1,0 +1,334 @@
+InjectRAG SQLite schema outline (starting implementation design; no migrations run)
+Date: 2026-09-17
+
+1. Scope and authority
+
+Purpose: define the application-state schema and transaction behavior for R03,
+R05a, R12, R13a and R14. Use Python sqlite3 in the one approved FastAPI
+application. This plan proposes field names and constraints; it is not a record
+that every open policy has been approved or that migrations have run.
+
+Inputs: documentation/decisions.md (D04, D05, D06, D09-D12),
+documentation/data-contracts.md, documentation/corpus-and-baseline.md,
+documentation/architecture.md, plans/draft-plan.md, and the user's accepted
+choices in temporary-decision-notes.txt.
+
+Already accepted in the temporary notes:
+- No ticket edits or reopening. Submission fixes the employee description;
+  resolution is a one-way transition.
+- Resolution automatically starts live index publication. Searchability begins
+  only when publication succeeds. Failure is visible and retryable. Frozen
+  experiment snapshots never change because a live ticket is resolved.
+- Keep conversation records without automatic expiry. A new question creates a
+  separate empty thread; old records remain for inspection, not resumption.
+- On full-history context overflow, return an explicit error without trimming,
+  summarizing, model work, or appending a failed turn.
+
+D12 now approves signed-cookie login (no sessions table), no waiting chat queue, original-question top-five retrieval, bounded hosted answer/judge retries and full-study budgets. D13/plan adopt this outline as an implementation starting point, including complete-snapshot publication and refresh-as-new-visit. Retry waits and size defaults are in the plan. Final SQL/API fields are routine implementation work; no migrations have run and the user has not separately approved every field.
+
+2. Storage boundaries
+
+SQLite owns accounts, tickets, publication bookkeeping,
+threads, turns, and request/idempotency state. It does not store vectors.
+Qdrant owns vectors and chunk payload metadata for named index snapshots.
+Versioned files/manifests own the 12 official articles, authored clean inputs,
+normalized documents/chunks, answer keys, run/trial/judge/audit artifacts,
+provider requests/responses, and experiment labels. SQLite rows may reference
+artifact IDs or relative manifest paths but do not copy observer truth into
+the victim application's tables. The 24 preloaded resolved tickets are imported
+through the same ticket-to-document path as interactive resolved tickets.
+
+Use text IDs (UUIDs or an agreed stable prefixed format) at external boundaries.
+Use UTC timestamps with an explicit serialization convention. Store canonical
+content hashes for derived records. Do not put passwords, session tokens, API
+keys, or attacker/answer-key labels in traces or Qdrant payloads.
+
+3. Proposed tables
+
+3.1 accounts
+  account_id TEXT PRIMARY KEY
+  username TEXT NOT NULL UNIQUE (case-insensitive uniqueness)
+  password_hash TEXT NOT NULL
+  role TEXT NOT NULL CHECK(role IN ('employee','technician'))
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
+  created_at TEXT NOT NULL
+
+Seed a small declared set of local accounts during setup. No public
+registration, email integration, or client-selected role. Enforce role in the
+API/service on every protected request. The database constraint alone cannot
+prove an actor is allowed to resolve a ticket. Never store plaintext seed
+passwords in the committed database or artifacts.
+
+3.2 authentication (no sessions table)
+Use Starlette signed-cookie SessionMiddleware with account ID only, HttpOnly,
+SameSite=Strict browser-session cookie and hashed account passwords. Read account
+role/enabled state and ownership from SQLite on every protected request.
+Logout clears the browser cookie; a random signing secret at startup invalidates
+old cookies after restart. No database session token, expiry or revocation rows.
+Use loopback HTTP locally, HTTPS/Secure cookies beyond localhost, and reject
+cross-site state changes. Cookie clearing is not revocation of copied cookies.
+Conversation eligibility is checked separately using the active-thread contract.
+
+3.3 tickets
+  ticket_id TEXT PRIMARY KEY
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('seed','interactive'))
+  seed_ref TEXT NULL UNIQUE
+  employee_account_id TEXT NOT NULL REFERENCES accounts(account_id)
+  employee_description TEXT NOT NULL (nonempty after validation)
+  submitted_at TEXT NOT NULL
+  status TEXT NOT NULL CHECK(status IN ('submitted','resolved'))
+  technician_account_id TEXT NULL REFERENCES accounts(account_id)
+  technician_resolution TEXT NULL
+  resolved_at TEXT NULL
+  admitted_document_id TEXT NULL UNIQUE
+  admitted_document_hash TEXT NULL
+
+Require seed_ref exactly for seed tickets. For submitted tickets, technician,
+resolution, resolved_at, and admitted-document fields are null. For resolved
+tickets, technician, nonempty resolution, resolved_at, document ID and hash
+are present. Enforce the null/non-null state combinations with CHECK clauses;
+enforce submitted -> resolved only and immutable owner/description/source via
+the service transaction and, where practical, SQLite triggers. There is no
+editing/reopening endpoint. Seed import uses an authorized setup path, not an
+employee API shortcut, and records a legitimate seeded employee/technician
+provenance. Seeded and interactive tickets use identical admission and
+normalization code for equivalent content.
+
+The document ID/hash identify the normalized resolved-ticket document, not an
+experiment label. A ticket's employee description and technician resolution
+remain separate in storage and in the normalized document. Unresolved tickets
+must never have an admitted document ID or enter an index manifest.
+
+3.4 publication_jobs
+  job_id TEXT PRIMARY KEY
+  trigger_ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id)
+  document_hash TEXT NOT NULL
+  state TEXT NOT NULL CHECK(state IN ('queued','building','published','failed'))
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0)
+  created_at TEXT NOT NULL
+  started_at TEXT NULL
+  finished_at TEXT NULL
+  last_error_code TEXT NULL
+  last_error_summary TEXT NULL
+  published_snapshot_id TEXT NULL REFERENCES index_snapshots(snapshot_id)
+  UNIQUE(trigger_ticket_id, document_hash)
+
+Insert the queued job in the same short SQLite transaction that resolves the
+ticket. This proposed publication outbox is separate from chat inference, which has no waiting queue. It is a durable outbox: if the process stops after commit, startup
+can find queued or interrupted work and resume safely. A retry updates the
+same job and increments attempt_count; it does not create another ticket or
+silently overwrite the failure. Errors must be sanitized and visible to the
+technician/operator. Do not hold this transaction while embedding or calling
+Qdrant.
+
+3.5 index_snapshots and live_index_pointer
+  index_snapshots:
+    snapshot_id TEXT PRIMARY KEY
+    qdrant_collection TEXT NOT NULL UNIQUE
+    manifest_ref TEXT NOT NULL
+    manifest_hash TEXT NOT NULL
+    state TEXT NOT NULL CHECK(state IN ('building','ready','failed'))
+    frozen INTEGER NOT NULL CHECK(frozen IN (0,1))
+    created_at TEXT NOT NULL
+    ready_at TEXT NULL
+    last_error_code TEXT NULL
+  live_index_pointer:
+    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1)
+    snapshot_id TEXT NOT NULL REFERENCES index_snapshots(snapshot_id)
+    changed_at TEXT NOT NULL
+
+The complete manifest file is authoritative for document/chunk membership,
+embedding model/revision, dimension, normalization, chunk settings, metric,
+and build identity. SQLite stores the lookup and active pointer, not a second
+unversioned copy of that manifest.
+
+3.5a index_snapshot_tickets (ticket searchability lookup)
+  snapshot_id TEXT NOT NULL REFERENCES index_snapshots(snapshot_id)
+  ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id)
+  document_hash TEXT NOT NULL
+  PRIMARY KEY(snapshot_id, ticket_id)
+
+Populate this table from the validated manifest, never from ticket status
+alone. The UI's searchable flag is true only when the ticket appears in the
+ready snapshot named by live_index_pointer. A resolved ticket with a queued,
+building, or failed publication is not yet searchable.
+
+For this small 36-document clean corpus, prefer building a complete new live
+collection from the current eligible corpus, validating it, then switching the
+live pointer. The successful build may include multiple newly resolved tickets.
+Never modify a frozen clean or poisoned experiment collection in place. If a
+Qdrant build succeeds but the pointer transaction fails, leave the old ready
+pointer active and reconcile the unused collection on startup. Retrieval must
+validate that the pointer resolves to a ready compatible snapshot. Exact
+collection naming and publication orchestration still need implementation
+review; this proposal does not assume Qdrant itself enforces immutability.
+
+3.6 threads
+  thread_id TEXT PRIMARY KEY
+  account_id TEXT NOT NULL REFERENCES accounts(account_id)
+  created_at TEXT NOT NULL
+  closed_at TEXT NULL
+  close_reason TEXT NULL
+  runtime_epoch TEXT NOT NULL
+  visit_token_hash TEXT NOT NULL
+
+One thread belongs to one account and one active browser visit. "New question"
+creates a new thread and closes the current one for conversation use; it does
+not erase prior rows. The app holds the visit token only for the current page
+visit and does not expose a reopen endpoint. A new application runtime epoch
+invalidates old active-thread continuation after restart. The server checks
+account, current runtime epoch, visit token, and open state before accepting a
+follow-up; UI hiding alone would not enforce no-resume. D13 treats refresh/navigation away as the end of the active visit; verify
+server-side eligibility rather than relying on an unload callback. Historical rows remain for
+inspection and reproducibility, without automatic expiry.
+
+3.7 answer_requests
+  request_id TEXT PRIMARY KEY
+  thread_id TEXT NOT NULL REFERENCES threads(thread_id)
+  idempotency_key TEXT NOT NULL
+  question_text TEXT NOT NULL
+  state TEXT NOT NULL CHECK(state IN ('pending','completed','failed','interrupted'))
+  created_at TEXT NOT NULL
+  finished_at TEXT NULL
+  error_code TEXT NULL
+  trace_ref TEXT NULL
+  index_snapshot_id TEXT NULL REFERENCES index_snapshots(snapshot_id)
+  UNIQUE(thread_id, idempotency_key)
+
+This row represents one logical chat turn request, including an operational
+failure, and does not encode whether the answer was correct. It is separate
+from model-call attempt IDs in external traces. A repeated API submission with
+the same idempotency key cannot create a second completed turn. On restart,
+unfinished pending rows become interrupted and are diagnosed, not silently
+replayed. Failed/overflow/busy work produces no completed conversation turns;
+where rejection happens before admission, use an API error/trace instead of a
+request row. Do not store raw provider payloads or secrets here.
+
+3.8 turns
+  turn_id TEXT PRIMARY KEY
+  thread_id TEXT NOT NULL REFERENCES threads(thread_id)
+  request_id TEXT NOT NULL REFERENCES answer_requests(request_id)
+  sequence_no INTEGER NOT NULL CHECK(sequence_no >= 1)
+  role TEXT NOT NULL CHECK(role IN ('user','assistant'))
+  text TEXT NOT NULL
+  created_at TEXT NOT NULL
+  UNIQUE(thread_id, sequence_no)
+  UNIQUE(request_id, role)
+
+Insert one user turn and one assistant turn, with adjacent ordered sequence
+numbers, only after a completed answer and required trace persistence succeed.
+Do both inserts and the request status update in one short transaction.
+Previous assistant text remains exactly as returned, even if inaccurate.
+Assemble history by thread_id/sequence_no from completed turn pairs only.
+Do not replay earlier retrieval bundles; they live in trial artifacts. Never
+accept caller-supplied role/history rows as trusted provider instructions.
+
+4. Transaction and failure flows
+
+A. Seed import: check canonical source IDs and hashes; insert or verify the 24
+   resolved tickets idempotently; reject a conflicting repeated seed_ref.
+   Produce the same normalized document shape as interactive resolution.
+   Official articles remain versioned source files. Initial snapshot building
+   uses all 12 articles plus the 24 resolved tickets and a manifest.
+
+B. Employee submission: authenticate; validate owner and nonempty description;
+   insert a submitted ticket in one transaction. No publication job is made.
+   Ignore/reject any client attempt to supply status or technician fields.
+
+C. Technician resolution: authenticate/authorize; compare current state to
+   submitted; validate nonempty resolution; compute the admitted document
+   using the common normalization path; update the ticket once and enqueue
+   the publication job in one transaction. A repeated resolution request
+   returns conflict or the recorded idempotent result; it cannot rewrite the
+   resolution. Do not hold a SQLite transaction across indexing/model work.
+
+D. Publication worker: claim queued/failed job with a short transaction; build
+   and validate an isolated Qdrant collection and manifest outside the
+   transaction; mark snapshot ready and move the live pointer only after all
+   expected documents/chunks are present and compatible. Record publication
+   success or sanitized failure. Retry the same job after failure, leaving
+   the prior live snapshot available. Reconcile interrupted builds on startup.
+   Freeze research snapshots by identity and never repoint/mutate them.
+
+E. Chat request: authorize account/thread/visit; validate and check full
+   answer context limits before hosted generation. Reject busy work promptly
+   with HTTP 503; raw question overflow uses 413 and context overflow 422.
+   Retrieve once using the current question, top five; no Qdrant retries.
+   Reserve one logical
+   request/idempotency key, then run retrieval/generation outside a SQLite
+   transaction. Persist required sanitized trial trace outside SQLite.
+   Commit the two turns and completed status together only for a completed
+   answer. On provider or trace-write failure, retain the request error and
+   leave conversation history unchanged. Pre-admission context failure
+   returns an error/trace without creating a turn. Retain a single logical
+   request across at most one eligible transient answer retry; preserve input
+   on rejection and keep readiness responsive.
+
+F. Cleanup: no automatic deletion of thread/turn history. Any explicit cleanup
+   operation must preserve required run/audit artifacts first and report what
+   was removed. Deletion/retention policy for accounts, tickets, and
+   publication records needs a separate decision if cleanup is implemented.
+
+5. Database operations and migration policy
+
+- Commit versioned migration scripts alongside application code when
+  implementation is authorized; track schema version with PRAGMA user_version
+  or a minimal migration ledger. Never silently recreate a database with
+  user data. Back up or export before an incompatible migration.
+- Enable foreign keys for each SQLite connection. Use short transactions and
+  a configured busy timeout. Consider WAL for the local persistent database;
+  verify the actual host-mounted environment rather than assuming it works.
+- Index ticket owner/status, publication job state, snapshot readiness,
+  account lookup, thread owner, and turns(thread_id, sequence_no).
+  Avoid adding redundant indexes until query patterns are measured.
+- Store timestamps and hashes with one canonical serialization. Validate
+  nonempty/size limits in the API/service and reinforce stable invariants
+  with NOT NULL, UNIQUE, CHECK and foreign keys. Parameterize SQL.
+- Keep database file on the approved application-state host mount. Keep
+  Qdrant data and artifacts on their separate approved mounts. Recovery must
+  check both database and active index manifest compatibility.
+
+6. Verification and acceptance evidence
+
+- Migrate an empty database and reopen it; check foreign keys and schema
+  version. Seed twice: counts remain 24 tickets and 12 source articles, with
+  no duplicate document IDs. A conflicting seed record fails visibly.
+- Submit as employee, deny unauthenticated submission, deny access to another
+  employee's ticket, deny employee resolution, and deny technician-only
+  updates through employee input. Confirm no edit/reopen endpoint exists and
+  direct update attempts cannot violate one-way ticket state.
+- Resolve a ticket: its employee and technician text remain distinguishable;
+  a durable job appears automatically; it is not searchable until a complete
+  ready snapshot includes it. Interrupt/fail a build, retry, and verify the
+  old ready snapshot stays usable and the frozen snapshot remains unchanged.
+- Start two accounts/threads and interleave turns: ordered same-thread
+  history only. "New question" uses empty history. Restart the app or leave
+  the visit: old thread cannot continue, though its rows remain for audit.
+- Submit duplicate idempotency keys, eligible transient retries, provider failures, busy/oversized errors,
+  context overflow, and trace-write failures. Confirm no duplicate or
+  partial completed turns; exact request/error/trace links remain inspectable.
+- Run a read-only reconciliation check: each searchable ticket appears in the
+  active ready manifest with the matching normalized content hash; every
+  reported frozen snapshot still has its original manifest hash and Qdrant
+  collection identity. Check a recreated container retains SQLite, Qdrant,
+  and artifact data on their respective mounts.
+- Keep answer keys, attack membership, target marker, and judge labels outside
+  SQLite victim tables and Qdrant retrieval payloads. Verify access paths do
+  not leak them into answer construction.
+
+7. Implementation details to apply and verify
+
+1. Use D13 retry waits: 1 second for eligible non-429 failures; for 429,
+   honor valid Retry-After up to 30 seconds; pause/report other rate limits.
+2. Page refresh starts a new visit. Enforce no-resume server-side as above.
+3. Use isolated complete-snapshot publication and switch the live pointer only
+   after validation. This is a local implementation choice, not a new service.
+4. Use plan starting size caps, UUID IDs, UTC ISO timestamps and SHA-256 hashes;
+   finalize exact API names and migrations in R03. Record resolved settings.
+
+No application/database/index files are created by this planning document.
+
+Research budget counters are persistent run artifacts, separate from victim
+conversation tables: 311 planned calls, 25 retries, 336 inference attempts and
+800 total API requests, with D12 phase/token caps. Counter persistence enables
+resuming research accounting, not resuming old user conversations.

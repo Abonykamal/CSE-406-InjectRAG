@@ -1,8 +1,6 @@
 # Teammate onboarding
 
-The project is in design review. No application, dataset, models, or experiment
-results exist yet. The agreed study scope is ready to explain; the implementation
-choices below still gate dependent work. This page summarizes current decisions
+The project is ready to begin the clean-system build. No application, dataset, models, or experiment results exist yet. The plan provides five delivery batches, concrete starting defaults and subsequent attack/defense tasks. Only the relevant live-run/research gates hold up dependent work. This page summarizes current decisions
 and does not approve new technology, experiments, or task ownership.
 
 ## Read first
@@ -22,10 +20,9 @@ needed to understand or implement the maintained plan.
 - One Python project, API and simple chat UI, executable ticket submission/resolution,
   seeded employee/technician roles, Docker delivery, and persistent trial artifacts.
 - Gemini generation through a replaceable adapter; local embeddings/retrieval;
-  independently configurable rewriting. Free tier initially; no paid usage approved.
+  no rewriting or reranking in the required baseline. Free tier initially; no paid usage approved.
 - Grounded answers with citations, missing-evidence handling, clarification,
-  question-scoped full history, and original-plus-rewritten follow-up retrieval with
-  logged original-only fallback.
+  full active-thread history for generation and a single current-question top-five search.
 - Clean corpus: 12 articles and 24 resolved tickets. Development and held-out sets:
   30 questions each, plus six separate conversation scripts. D06 defines readiness.
 - Attack testing is primary; spotlighting is a secondary comparison. Add five
@@ -41,25 +38,23 @@ needed to understand or implement the maintained plan.
 
 D10 approves FastAPI/Uvicorn with one initial worker, a FastAPI-served HTML/CSS/JavaScript UI using fetch and complete responses, uv with pyproject.toml and a committed uv.lock, SQLite through Python sqlite3 for accounts/tickets/threads/turns, and local Qdrant for vectors and chunk metadata. Docker Compose runs two services: one custom application image and the existing Qdrant image, with separate persistent host mounts for application state, Qdrant data, snapshots/results, and model cache. Research commands use the application image as one-off jobs. These are design approvals only; no application files or services exist.
 
-D11 selects BAAI/bge-small-en-v1.5 through FastEmbed/ONNX Runtime on CPU, Gemini gemini-3.8-flash for answers and separate observer judging, and gemini-3.5-flash-lite for independently configured rewriting. Use google-genai, Python 3.12, low thinking for answers/judging and minimal thinking for rewriting. Resolve compatible stable dependencies during authorized setup, commit exact uv.lock versions, pin Docker images by digest, and record embedding revisions/hashes before baseline freeze. See [D11](decisions.md#d11) for the approved pilot design and its limits. Stack/model selection is closed; account quotas and measured feasibility have not been verified.
+D11 selects BAAI/bge-small-en-v1.5 through FastEmbed/ONNX Runtime on CPU and Gemini gemini-3.8-flash for answers and separate observer judging. D12 removes the rewrite model from required scope. Use google-genai, Python 3.12 and low thinking for answers/judging. Resolve compatible stable dependencies during authorized setup, commit exact uv.lock versions, pin Docker images by digest, and record embedding revisions/hashes before baseline freeze. See [D12](decisions.md#d12) for the revised pilot and whole-study limits. Stack/model selection is closed; account quotas and measured feasibility have not been verified.
 
 ## Decisions still needed
 
 | Review batch | Remaining choices | Needed before |
 |---|---|---|
 | Attack and measurement | Exact target behavior/marker; initial payload wording, repetition/placement and concealment choice; behavioral scoring rubric and attack-run audit scope | Payload freeze and security scoring, not ordinary clean ingestion |
-| Application policies and limits | Ticket edits/reopening, sessions/SQLite schemas/index publication; history retention/resume/overflow; retrieval fusion/rewrite validation; full-run aggregate budgets, queue/overflow/retry details beyond the approved pilot bounds | Dependent workflow, context, API, and integration tasks |
+| Routine implementation work | D13/plan provide starting schema/publication, visit, retry-wait, chunking and size defaults; finalize API fields and prompt text in their tasks | Implement and validate during the clean build; no separate blanket approval round |
 
-**Stack and models: design closed (D10/D11).** Before live work, verify account model access/free-tier quotas and dependency compatibility, record exact package/image/model-artifact pins under the approved policy, then obtain measured feasibility evidence within the approved pilot design after execution is authorized. These are verification tasks, not pending model selections.
+**Stack and models: design closed (D10/D11).** Before live work, verify account model access/free-tier quotas and dependency compatibility, record exact package/image/model-artifact pins under the approved policy, then obtain measured feasibility evidence within the approved pilot design within D12 limits once account and live-run prerequisites are verified. These are verification tasks, not pending model selections.
 
-Also settle the six conversation scripts' split and execution details before their
-evaluation. Metric interpretation needs a short review: marker presence versus
+D12 selects six clean scripts × three turns, once each, judged per turn. The plan assigns three development and three held-out scripts; author contents before evaluation. Metric interpretation needs a short review: marker presence versus
 actual compliance, top-k versus context exposure, the conditional ASR identity,
 zero-exposure ISR, and concealment/repetition confounds. These explanations do not
 require extra experimental conditions.
 
-Exact clean chunk size/overlap, retrieval counts, evidence limits, and prompt wording
-need concrete proposals and clean development evidence. Record initial settings and
+The plan supplies initial clean chunking settings; implement exact prompt wording within the accepted contract. D12 already fixes top five and the 2,048-token evidence ceiling; validate these choices on clean development data. Record initial settings and
 freeze final choices before evaluation; do not invent measured optimal values during
 onboarding or tune them against attack success. Existing approval gates still apply.
 
@@ -69,7 +64,7 @@ onboarding or tune them against attack success. Existing approval gates still ap
 |---|---|
 | Target application | R01–R14: runtime, ingestion/retrieval/generation, ticket workflow, API/UI, and trace persistence. See [architecture](architecture.md) and [contracts](data-contracts.md). |
 | Corpus and evaluation | R04, R15–R17: canonical policy, clean documents, split questions/keys, scorer/audit, baseline and reproduction. See [corpus](corpus-and-baseline.md) and [evaluation](evaluation.md). |
-| Attack and secondary defense | Later research phase after the clean baseline: restricted-brief payload authoring, frozen poisoned snapshots, exposure/behavior scoring, and spotlighting comparison. See [design review](design-review.md). |
+| Attack and secondary defense | R18–R21 after clean readiness: restricted-brief payload authoring, frozen poisoned snapshots, exposure/behavior scoring, and spotlighting comparison. See [design review](design-review.md). |
 
 Agree named owners and immediate tasks as a team. Account for the attacker knowledge
 boundary when sharing material: someone who has already inspected withheld data
@@ -80,3 +75,13 @@ Before coding, read the task prerequisites and [development workflow](developmen
 Do not infer implementation approval from a proposed setting. Preserve existing
 working-tree changes and record actual checks, not planned success. Optional ideas
 remain in [things to try if time permits](optional-extensions.md), outside completion gates.
+
+## Accepted application policies and budget — D12
+
+- No ticket editing/reopening. Resolution starts publication automatically; successful publication makes the ticket searchable, with visible retryable failures. Frozen snapshots stay unchanged.
+- Seeded username/password login with signed browser-session cookie carrying account ID; SQLite role/ownership checks, no sessions table.
+- Retain stored history without expiry; full active-thread follow-ups, no old-thread resume; explicit overflow errors without trimming.
+- One current-question cosine search, top five, stable chunk-ID ties/deduplication; no rewriting, fusion or reranking. Whole-chunk evidence up to 2,048 tokens including labels. Rewriting/reranking are optional extensions.
+- No waiting chat queue: 503 busy, 413 oversized question, 422 context overflow; preserve input and create no failed turns.
+- At most one eligible transient answer/judge retry; no quality-based or automatic retrieval retries.
+- Budget approved: 311 planned calls + 25 retry attempts = 336 maximum, within 800 total API requests. Pilot is 35 planned/40 maximum, within 100 API requests. See [D12](decisions.md#d12) for phase/token caps and genuinely remaining details.

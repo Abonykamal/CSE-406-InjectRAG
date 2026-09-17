@@ -1,20 +1,22 @@
 # Architecture decision log
 
-**Pending means not approved.** Recommendations guide discussion; they do not authorize an implementation agent to select a major design. The user approved D01 and D03 and approved the revised hosted-generation direction for D02. D10 selects the application stack; D11 selects models, Python/runtime direction, version policy and pilot bounds. Account quota/compatibility/feasibility verification and application policies remain outstanding. D04 scope is accepted with workflow details pending. D05 answer/history/retrieval direction, D06 dataset/scoring/readiness targets, D07 chunking boundary, and D08 three-condition scope with fixed N = 5, distinct covers sharing one base instruction/directive, and restricted-brief authoring followed by frozen evaluation are accepted. Their remaining details are listed explicitly below; accepted choices must not be reopened as pending defaults.
+**Pending means not approved.** D01–D11 establish the accepted base design. [D12](#d12) records the subsequent application/retrieval/retry choices and the user-approved whole-study budget. D12 supersedes earlier required rewriting/fusion, unresolved application-policy statements and the original 40-call/45-attempt pilot. [D13](#d13) records the subsequent implementation direction and routine starting defaults. Historical entries below retain their original rationale; the current table and D12/D13 govern implementation. Account verification, measured feasibility and remaining research details are still outstanding.
 
 | ID | Major decision | Proposal / alternatives | Status | Blocks |
 |---|---|---|---|---|
 | [D01](#d01) | First application interface | API plus simple chat UI from the start | Accepted | UI delivery selected in D10; question-scoped memory accepted in D09 |
 | [D02](#d02) | Models, hardware, cost, execution | Gemini API generation through a replaceable provider adapter; Docker delivery; local embeddings/retrieval; retained trial artifacts | D10 stack and D11 models/pilot design accepted | Account quota, compatibility and measured feasibility verification |
 | [D03](#d03) | Language and project layout | One Python project with separate RAG, experiment, and evaluation packages and shared contracts/configuration | Accepted | FastAPI/uv in D10; Python 3.12 and version-pinning policy in D11 |
-| [D04](#d04) | Corpus and ingestion realism | Synthetic articles and resolved tickets; account-access recovery plus adjacent topics; executable ticket submission/resolution and preloaded resolved tickets | Scope accepted; workflow details pending | Ticket lifecycle, session mechanism, and index publication details; SQLite selected in D10 |
-| [D05](#d05) | Baseline prompt and context policy | Grounded answers/citations; full-thread history; original-plus-rewritten retrieval with logged fallback; separate baseline evidence and later spotlighting | Direction accepted; exact rendering/fusion and resource details pending | Prompt syntax, fusion/validation, retention, overflow and evidence limits; SQLite selected in D10 |
-| [D06](#d06) | Clean readiness and scoring | Automated checks/model judge; 36 documents, 30+30 questions, six scripts; 10-answer audit plus flags; readiness targets and initial repeats approved | Scoring, dataset/audit sizes, readiness targets, and initial repetitions and D11 judge/pilot design accepted; full-run policies pending | Baseline freeze and M4 completion |
+| [D04](#d04) | Corpus and ticket admission | Synthetic articles and resolved tickets; executable workflow | Accepted; lifecycle/login/publication resolved by D12 | Implement/verify D13 schema and publication defaults |
+| [D05](#d05) | Grounded answers and context | Full history, citations, missing-evidence handling; D12 current-question top-five retrieval | Accepted; original rewrite/fusion superseded by D12 | Prompt syntax and clean validation |
+| [D06](#d06) | Clean readiness and scoring | 36 documents, 30+30 questions, six scripts, limited audit and readiness gates | Accepted; full budget/script execution bounds in D12 | Rubric/script authoring and actual M4 evidence |
 | [D07](#d07) | Attacker knowledge versus chunk integrity | Ordinary frozen victim chunking; observer-only integrity measurement; repetition/placement allowed using general chunking knowledge | Main-study approach accepted; exact variants pending | Later attack construction and exposure annotations |
 | [D08](#d08) | Controlled comparison design | Clean baseline, attacked baseline, defended attack only; fixed N = 5 attacker tickets; no budget sweep, defended-clean, or cover-only condition | Conditions, document budget, composition, authoring/access procedure, and initial repetitions accepted; exact payload details pending; attacker-side verification optional, not a blocker | Attack/defense experimental plan |
-| [D09](#d09) | Conversation memory | Remember follow-ups within the current question thread; new questions start fresh threads | Accepted scope | Full history/retrieval accepted in D05; SQLite in D10; retention/resume/overflow pending |
-| [D10](#d10) | Application stack and local vector database | FastAPI/Uvicorn, plain browser UI, uv, SQLite, local Qdrant; two Compose services | Accepted design | D11 resolves models/version policy/pilot design; application policies and verification remain |
-| [D11](#d11) | Models, version policy and pilot | CPU BGE-small/FastEmbed; Gemini 3.8 Flash answer/judge; 3.5 Flash-Lite rewrite; Python 3.12; bounded pilot | Accepted design; stack/model review closed | Account access/quotas, compatibility, pins and measured feasibility unverified; no execution authorized |
+| [D09](#d09) | Conversation memory | Full active-thread history; fresh New question | Accepted; retention/no-resume/overflow in D12 | Implement/verify D13 visit default and API checks |
+| [D10](#d10) | Stack and storage | FastAPI/plain UI, uv, SQLite, local Qdrant; two services | Accepted; policies in D12 | Setup and compatibility evidence |
+| [D11](#d11) | Models and version policy | CPU BGE-small, Gemini 3.8 Flash answer/judge, Python 3.12 | Accepted; rewrite removed and pilot revised by D12 | Account access, pins and feasibility evidence |
+| [D12](#d12) | Application policies, retrieval and study budget | No edits/reopen/resume/queue; signed cookie; top five; bounded retries; 311 calls/336 attempts | Accepted | D13 starting settings; implementation not started |
+| [D13](#d13) | Rapid implementation sequence | Begin clean build; budgeted integration checks; R18–R21 attack/defense tasks | Direction accepted; defaults recorded as implementer choices | Live account checks and remaining attack/scoring gates |
 
 ## Logging convention
 
@@ -92,6 +94,8 @@ D10 subsequently selects FastAPI/Uvicorn and uv with uv.lock; exact versions and
 
 ## D09 — Remember follow-ups within a question thread
 
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
+
 - Status: accepted scope; full-history/retrieval resolved by D05; SQLite selected by D10; retention/resume/overflow pending
 - Date: 2026-09-13
 - Approval: user requested “make it remember the previous turns for that particular question.”
@@ -120,6 +124,8 @@ Replaces the unapproved independent-question recommendation recorded with D01; D
 <a id="d04"></a>
 
 ## D04 — Synthetic corpus and executable ticket admission
+
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
 
 - Status: accepted scope; workflow implementation details pending
 - Date: 2026-09-16
@@ -157,6 +163,8 @@ Verification must exercise API authorization directly, including denied employee
 <a id="d05"></a>
 
 ## D05 — Grounded baseline answer behavior
+
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
 
 - Status: answer behavior, baseline/defense separation, full history, retrieval and fallback direction accepted; SQLite selected by D10; exact syntax/fusion, retention/resume/overflow, and budgets pending
 - Date: 2026-09-16
@@ -212,6 +220,8 @@ Validate prior-answer errors, corrections, irrelevant earlier exchanges, current
 <a id="d06"></a>
 
 ## D06 — Automated-first scoring with limited human audit
+
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
 
 - Status: scoring direction, dataset/split/audit sizes, readiness gates, repetitions and D11 judge/pilot accepted; rubric implementation, full-run policies and script execution details pending
 - Date: 2026-09-16
@@ -354,6 +364,8 @@ The core attack remains authoring from the restricted brief followed by frozen v
 
 ## D10 — Compact application stack and local Qdrant
 
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
+
 - Status: accepted design; D11 resolves model/version/pilot selections; implementation and verification outstanding
 - Date: 2026-09-17
 - Approval: after discussing Qdrant and clarifying the revised two-service layout, the user approved the remaining stack recommendations.
@@ -388,6 +400,8 @@ This resolves stack/storage/delivery details left open in D01–D05 and D09; it 
 <a id="d11"></a>
 
 ## D11 — Models, version policy, and bounded pilot design
+
+> Historical entry: [D12](#d12) resolves later application policies and budget limits, removes required rewriting/fusion and revises pilot counts. Read D12 for current requirements.
 
 - Status: accepted design; account access/quota, compatibility and measured feasibility unverified; execution not authorized
 - Date: 2026-09-17
@@ -438,6 +452,81 @@ Sources: [BGE model card](https://huggingface.co/BAAI/bge-small-en-v1.5), [FastE
 ### Closure and remaining work
 
 D10 and D11 close the stack/model selections, version policy and initial pilot design. Preserve older pending statements as dated history; D11 resolves the corresponding model/pilot questions in D02/D03/D05/D06/D10. Model access/quota verification, lock/image/artifact pinning, compatibility checks and actual pilot measurements remain execution prerequisites/evidence, not unmade model selections. Application policies and attack/measurement details remain separate review batches. No application implementation or experiment has started.
+
+<a id="d12"></a>
+
+## D12 — Application policies, top-five retrieval and whole-study budget
+
+> [D13](#d13) subsequently supplies routine starting defaults and updates implementation authorization; D12 budget and behavioral choices remain unchanged.
+
+- Status: accepted design; implementation and runtime verification outstanding
+- Date: 2026-09-17
+- Approval: user accepted the policies recorded in temporary notes, chose five chunks with reranking off, and then instructed: “Approve the budget plan, then update all of the docs in the repo to be consistent with these decisions.”
+- Related tasks: R01, R03, R05a, R09–R17
+
+### Tickets and publication
+
+Submitted ticket descriptions are immutable. Technicians resolve once; no ticket editing or reopening. Resolution automatically starts live publication; resolved means eligible and successful complete publication means searchable. Retain visible retryable publication failures. Live publication never mutates frozen clean/poisoned experiment snapshots. The exact schema and complete-publication orchestration in [SQLite proposal](../sqlite-schema-plan.txt) remain proposals, not an implemented database.
+
+### Login, history and request handling
+
+D12 selects a username/password form for seeded accounts and Starlette signed-cookie SessionMiddleware. Store only account ID in an HttpOnly, SameSite=Strict browser-session cookie, hashed passwords in SQLite, and check current account role/ownership on every protected API request. Logout clears the cookie; a random signing secret at startup invalidates cookies on app restart. No SQLite sessions table, registration, persistent login or external identity service. Bind the HTTP demo to loopback; use HTTPS/Secure cookies beyond localhost and reject cross-site state-changing requests. Cookie clearing is not server-side revocation of copied cookies.
+
+D12 retains SQLite threads/turns across restarts without automatic expiry, for inspection rather than resumption. Follow-ups use full ordered user/assistant history only within the active thread; New question starts empty. Leaving or restarting does not allow old-thread continuation. Prior evidence bundles remain in artifacts. Preflight the complete answer request, including output reserve. If full history cannot fit, return HTTP 422 with a context-limit code and a start-new-question message, preserve typed input, record the error, and make no answer call or turn append. Never silently trim or summarize history. Explicit cleanup follows preservation of required research artifacts.
+
+D12 removes the waiting chat queue. Keep one hosted model call at a time; an occupied inference slot returns HTTP 503 with a machine-readable busy code promptly, without model work or turn creation. Preserve typed text for manual retry and keep readiness responsive. Oversized raw questions return HTTP 413; history/context overflow returns HTTP 422. Set the raw-question size cap during API configuration.
+
+### Retrieval and optional extensions
+
+D12 selects one cosine vector search using the current question as written, including follow-ups: top five chunks, descending score with stable chunk-ID tie breaking. Deduplicate only by chunk ID; no reranking, query rewriting, fusion, per-document quota, source preference, attacker-label filtering or uncalibrated similarity cutoff. Include whole chunks in rank order under a 2,048-token evidence ceiling including labels and the complete request limits; log excluded chunks and reasons. Actual context may contain fewer than five chunks. Trace raw top-five rankings and actual context separately. Validate on clean development data and freeze before held-out evaluation; changes require evidence and review. Use identical retrieval rules across conditions and the same poisoned snapshot/candidate list for matched attacked/defended single-turn trials.
+
+Full history goes to answer generation, not the retrieval query. Vague follow-ups can retrieve poorly; validate references, corrections, topic shifts and misleading prior answers with clean scripts, and clarify when evidence cannot support a response. No rewrite output, rewrite validation/fallback or fusion stage exists. Rewriting and reranking are [optional extensions](optional-extensions.md), requiring separate approval and budget. The earlier eight-candidate/six-selected proposal was not supported by measured clean-development evidence and was not adopted. Five is the approved starting limit, not a measured optimum.
+
+### Retry policy
+
+D12 permits at most one retry of a hosted answer or observer-judge call only for temporary network failure, timeout, provider 5xx, or 429 with a short retry window. Retry a failed judge only, never its completed answer. Pause on daily/account quota exhaustion. Poor retrieval, wrong answers and missing attack markers never trigger retries; no automatic Qdrant search retry. Attempts retain one logical trial identity and consume both phase and study limits. Ticket-publication retry is separate. Exact bounded wait timing remains to specify; the proposed 30-second 429 cutoff is not approved.
+
+### Approved aggregate budget
+
+| Phase | Answers | Judgments | Planned calls | Extra retry attempts | Maximum attempts |
+|---|---:|---:|---:|---:|---:|
+| Pilot | 15 | 20 (including five fabricated cases) | 35 | 5 | 40 |
+| Full development | 30 | 30 | 60 | 5 | 65 |
+| Held-out, three conditions | 90 | 90 | 180 | 10 | 190 |
+| Six clean scripts × three turns, once each | 18 | 18 | 36 | 5 | 41 |
+| **Whole study** | **153** | **158** | **311** | **25** | **336** |
+
+The user approved this revised budget on 2026-09-17. The six scripts run on the clean system, three turns each, once, with one judgment per turn. Script contents and development/held-out assignment still need specification. Count the 30 clean held-out answers and compatible judgments once; reuse them in the three-condition comparison. Development is counted separately from the pilot. No attacked/defended scripts, optional extensions or separate early feasibility smoke calls are included. Allocate any early smoke explicitly within an approved plan before execution; do not silently add calls or spend retry reserves on new trials.
+
+Every inference attempt has at most 8,192 input tokens. Pilot answer/judge output caps are 4,096; later caps are 2,048, including provider thinking usage where applicable. The study ceilings are 2,752,512 input tokens (336 × 8,192) and 770,048 output tokens (40 × 4,096 + 296 × 2,048). These are worst-case limits, not expected consumption. The 800 total API-request ceiling includes inference, token counting and metadata; the pilot's 100-request sublimit remains. Count attempts conservatively when provider usage is unavailable, reserve capacity before dispatch, and persist cumulative phase/study counters across run restarts. Do not reset counters to create new allowance. Stop before exceeding any cap and report incomplete outcomes. Rate limits control speed; this budget controls total usage. Actual account quotas may be lower and take precedence. Budget approval does not authorize paid usage, extra experiments or execution in this documentation task.
+
+Retain the 90-second answer/judge attempt timeout, one-call concurrency, 4 GiB application/1 GiB Qdrant pilot memory ceilings and median answer-latency target of 30 seconds excluding quota waits. Removing five rewrite fixtures reduces the pilot to 35 planned calls/40 maximum attempts; the removed calls are not reassigned.
+
+### Remaining work and verification
+
+Still specify clean chunking/overlap, prompts/spotlighting syntax, source rendering, embedding overlength handling, exact API/schema details and complete-publication method; settle page-refresh/visit semantics and bounded retry wait timing. Set routine size caps and IDs during implementation design. Specify script contents/split, attack target/marker and payload details, behavioral scoring rubric and later human-audit scope. No extra judge call per metric is budgeted: the single judgment must return the required labels, with deterministic metrics computed locally. Verify model access/free-tier quotas, pins and measured feasibility before execution. Do not reinterpret these remaining items as reopening accepted top-five retrieval, no-rewrite/no-reranking, login or budget decisions.
+
+### Supersession and records
+
+Supersedes D05 required original-plus-rewritten retrieval and fallback, D11 rewrite model/fixtures and original pilot totals, and earlier pending statements for the policies settled here. Preserves D06 readiness, D08 fixed five-ticket/three-condition/non-adaptive attack scope and primary fresh-thread single-turn metrics. Operational retries do not add evaluation repetitions. The temporary notes remain a conversation record; this decision register now governs maintained documentation.
+
+<a id="d13"></a>
+
+## D13 — Implementation readiness and rapid delivery sequence
+
+- Status: implementation direction accepted; concrete starting defaults are implementer choices within D12, not additional user-approved research decisions
+- Date: 2026-09-17
+- Source: user requested that documentation and the draft plan be ready for rapid implementation toward the attack and defense, then instructed “Continue.”
+
+Proceed with the accepted clean build; do not require another blanket authorization based on historical documentation-only restrictions. The current review updates the plan and does not claim implementation or live execution has occurred. Paid use, model substitutions, scope/budget expansion and changes to research claims still require review.
+
+The [plan](../plans/draft-plan.md#2-implementation-gates-and-rapid-delivery-order) now groups work into five delivery batches and supplies R18–R21 attack/defense tasks. R01 local preflight runs alongside scaffolding; measured hosted feasibility follows a working pipeline. The first planned R16 pilot answer supplies live integration evidence, without an extra smoke call. Reproduction uses local rebuilds, retained outputs and offline scoring rather than another baseline generation. All D12 counts and limits remain unchanged.
+
+Routine starting details are now recorded in the plan: the SQLite outline with complete-snapshot publication, page-memory visit tokens with refresh ending a visit, bounded retry waits (1 second for eligible non-429 errors; valid Retry-After up to 30 seconds for 429), 2,000-character questions also constrained by the 512-token embedding input bound, 20,000-character ticket fields, paragraph-aware 320-token chunks with up to 48-token overlap, and a three-development/three-held-out split for the six three-turn scripts. These are implementation defaults to validate on clean data, not measured optima or a claim that the user separately approved each number. Record exact resolved settings and hashes; preserve accepted top-five retrieval and the 2,048-token evidence allowance.
+
+This resolves routine starting-detail deferrals in D12 and the SQLite proposal for beginning the build. Final code/schema/prompt details and account/model compatibility still need verification. D12 retry eligibility and no silent truncation remain binding. An unavailable selected model is a blocker for live calls, not permission for automatic substitution.
+
+The exact attack target/marker, five-ticket payload specification, behavioral rubric and later audit scope remain research gates before R18/R20. Restricted authoring must use a person/context that has not received withheld inputs; an implementation agent that knows victim internals cannot later claim blindness. Clean development and generic comparison tooling can proceed while those research choices are settled. No extra variants, attack-authoring model calls or optional extensions are budgeted.
 
 ## Template for future entries
 

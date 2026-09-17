@@ -29,7 +29,6 @@ src/injectrag/
     embeddings.py
     index.py
     retrieval.py
-    rewriting.py               # original-plus-rewritten follow-ups
     context.py
     generation.py
     pipeline.py
@@ -67,7 +66,7 @@ Entry points and experiment orchestration call the RAG package. Evaluation consu
 
 The required API and simple chat UI belong in thin presentation packages. D10 approves FastAPI-served HTML/CSS/JavaScript assets using fetch and complete responses; streaming is deferred. A separate `apps/` project becomes useful when a frontend needs its own language, dependencies, build, or deployment; it is not required just to name the RAG system. Revisit D03 before creating such a project. Keep one source of truth for shared contracts. Rewriting belongs in the victim pipeline; judging remains observer-only. Model-provider interfaces may be shared without introducing a dependency from victim code on evaluation logic.
 
-D10 selects SQLite via sqlite3 for application state and a separate local Qdrant Compose service for vector storage. One custom application image also runs one-off research commands; Qdrant uses its existing image. Persist application state, Qdrant data, snapshots/results, and model cache in separate host-mounted directories. D11 selects Python 3.12, model IDs, CPU FastEmbed/ONNX, google-genai and the version-pinning policy. Exact stable package/image/artifact pins will be resolved during authorized setup; paths, schemas and application policies remain pending; none of these application files exists yet.
+D10 selects SQLite via sqlite3 for application state and a separate local Qdrant Compose service for vector storage. One custom application image also runs one-off research commands; Qdrant uses its existing image. Persist application state, Qdrant data, snapshots/results, and model cache in separate host-mounted directories. D11 selects Python 3.12, model IDs, CPU FastEmbed/ONNX, google-genai and the version-pinning policy. Exact stable package/image/artifact pins will be resolved during authorized setup; paths and final schemas remain to specify; D12 settles application/retrieval/retry policies and whole-study limits; none of these application files exists yet.
 
 ## Tracking and generated files
 
@@ -76,7 +75,11 @@ Commit authored synthetic inputs, query definitions, prompts, configuration, man
 ## Staged creation
 
 1. This change: documentation and plan only.
-2. After account/compatibility verification and implementation authorization under D11: Python package, API/UI skeleton, dependency configuration, tests, and ignore rules.
+2. After local preflight under D13 (account checks gate hosted runs only): Python package, API/UI skeleton, dependency configuration, tests, and ignore rules.
 3. With ingestion/baseline tasks: data, manifests, prompts, and runtime configurations.
 4. At first execution: generated directories created by commands, never assumed to exist.
-5. After clean baseline: attack and experiment packages under a separate approved plan.
+5. After clean baseline: attack and experiment tasks R18–R21 in the existing implementation plan.
+
+D12 uses signed-cookie authentication without a SQLite sessions table. Keep accounts/tickets/threads/turns in application storage; publication bookkeeping is detailed in the [SQLite proposal](../sqlite-schema-plan.txt). No rewrite or reranker module is required. Persist phase/study usage counters and trial attempts in research artifacts across run restarts.
+
+Implement only packages needed by the current delivery batch. The plan now includes R18–R21 for the fixed attack/defense; no separate general planning phase or second application is required.

@@ -11,8 +11,8 @@ Generation (RAG) pipeline, and a lightweight spotlighting defense.
 | 2105072 | Abony Kamal |
 | 2105089 | Farhana Adri |
 
-> **Status:** planning draft; implementation has not started. Major design choices
-> remain open. See the [replacement implementation plan](plans/draft-plan.md),
+> **Status:** ready to begin the clean-system build; implementation has not started.
+> Core decisions are recorded, with routine starting defaults and later research gates in the plan. See the [replacement implementation plan](plans/draft-plan.md),
 > [project documentation](documentation/README.md), and
 > [actual project status](documentation/project-status.md). The design report is
 > revisable; the overview below describes research intent, not verified behavior.
@@ -45,8 +45,7 @@ The approved stack is FastAPI/Uvicorn, a plain HTML/CSS/JavaScript UI served by 
 uv with a committed lockfile, SQLite application/history storage, and local Qdrant.
 Docker Compose runs the application and Qdrant as two services with persistent host storage.
 Selected models: CPU BAAI/bge-small-en-v1.5 via FastEmbed/ONNX; Gemini
-`gemini-3.8-flash` for answers and separate observer judging;
-`gemini-3.5-flash-lite` for rewriting. Python 3.12, a reproducible version-pinning
+`gemini-3.8-flash` for answers and separate observer judging. Python 3.12, a reproducible version-pinning
 policy, and bounded pilot design are approved. Account quotas, compatibility and
 measured feasibility remain unverified; no execution has started. See
 [runtime feasibility](documentation/local-runtime-feasibility.md) and [D11](documentation/decisions.md#d11).
@@ -57,11 +56,7 @@ quality is checked with a limited human audit; approved readiness thresholds and
 repetitions are in [D06](documentation/decisions.md#d06). These are planned inputs,
 not existing data or results.
 
-Follow-ups use full same-thread user/assistant history without routine trimming.
-Retrieval searches both the current question and a model-generated standalone
-rewrite; rewrite failure triggers logged original-question retrieval. Fresh evidence
-precedes the current question in the answer request. Prior retrieval bundles are
-retained in artifacts rather than replayed as history. Exact settings remain pending.
+Follow-ups use full active-thread user/assistant history for generation. Retrieval uses the current question as written: one cosine search, top five chunks, no rewriting or reranking, and at most 2,048 evidence tokens. Fresh evidence precedes the current question; prior evidence bundles are not replayed. Retain stored history without expiry, but offer no old-thread resume. Overflow returns an explicit error without trimming. See [D12](documentation/decisions.md#d12).
 
 ## System Model
 
@@ -93,8 +88,7 @@ tests whether untrusted content can cross this boundary and be read as
 Let `D` be the legitimate corpus and `S` the application's trusted system
 instruction. For a query `q`, the system retrieves top-k documents `E(q; D)` and
 returns `r = LLM(S, q, E(q; D))`. This notation describes fresh-thread trials;
-conversation history and original-plus-rewritten retrieval are explicit extensions
-for multi-turn tests, whose results are reported separately.
+conversation history is included for multi-turn tests, whose results are reported separately. Retrieval still uses only the current question.
 
 The attacker targets a **query class** `Q` — semantically related questions
 victims are expected to ask — and fixes one target directive `R` to be induced
@@ -144,8 +138,7 @@ The initial application will support executable ticket submission and resolution
 alongside preloaded synthetic resolved tickets. Employee descriptions and technician
 resolutions remain distinguishable; only resolved tickets are eligible for ingestion.
 Seeded local employee/technician accounts and API-enforced role/ownership checks
-are approved. SQLite persistence is selected; exact sessions, edit/reopen rules, and index publication
-policy remain pending under D04.
+use signed-cookie login and SQLite role/ownership checks. Submitted tickets cannot be edited or reopened. Resolution automatically starts live publication; only successfully published tickets are searchable. Frozen experiment snapshots remain unchanged.
 
 Employees can submit IT support tickets, and resolved tickets are ingested into
 the corpus alongside official documentation in this simulated setting. Resolved
@@ -155,8 +148,7 @@ the baseline. This does not simulate evasion of a real ticket-review process.
 
 The attacker is a malicious employee controlling their own ticket description,
 not technician resolution text, resolved status, or official articles. The study
-assumes this description survives resolution and admission; exact edit rules
-remain pending.
+assumes this immutable description survives resolution and admission.
 
 ```
 attacker-controlled document → ingestion into corpus → retrieval for a victim query
@@ -210,7 +202,7 @@ just because the attack failed.
 
 | Metric | Definition |
 |---|---|
-| **RSR** (Retrieval Success Rate) | Fraction of victim queries for which at least one attacker document appears in the top-k context |
+| **RSR_topk / RSR_context** | Fraction of trials with attacker content in raw top five / actual model context, respectively |
 | **ISR** (Injection Success Rate) | Fraction of *retrieved* trials in which the response contains `R` |
 | **ASR** (Attack Success Rate) | Fraction of *all* trials whose response contains `R` |
 | **ASR-exclusive** | Fraction of all trials whose response contains `R` **and not** the ground-truth answer |
@@ -262,7 +254,7 @@ acceptance checks, and explicit user decision gates.
 Start with the [documentation index](documentation/README.md),
 [proposed architecture](documentation/architecture.md),
 [repository layout](documentation/repository-structure.md), and
-[pending decisions](documentation/decisions.md).
+[decision register](documentation/decisions.md).
 
 The shortened submitted report is `B1_Group_7.pdf`; the earlier detailed report
 is a historical proposal. Current approvals govern implementation. Neither report
@@ -284,3 +276,5 @@ implemented yet. The purpose is to measure
 whether the trust boundary between system instructions and retrieved content
 holds, and how a formatting-level mitigation changes attack success and answer
 quality under poisoning. Clean-corpus defense utility is outside the selected comparison.
+
+The [approved study budget](documentation/decisions.md#d12) is 311 planned hosted calls plus 25 eligible retry attempts (336 maximum), within 800 total API requests. No waiting chat queue: busy requests fail promptly for manual retry. Rewriting and reranking remain optional extensions. Budget approval is a design decision; no runs have been performed.
