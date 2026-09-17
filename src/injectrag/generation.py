@@ -10,12 +10,18 @@ of real model behavior.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 
+# Quiet google-genai's "Automatic function calling" advisory; we use none.
+logging.getLogger("google_genai.models").setLevel(logging.ERROR)
+
 _MODEL = "gemini-3.8-flash"
-_FALLBACK_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
+_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash")
+_MAX_RATELIMIT_RETRIES = 4
 
 
 @dataclass
@@ -46,29 +52,44 @@ def _gemini_generate(key: str, system_instruction: str, user_message: str) -> Ge
     models_to_try = (_MODEL,) + _FALLBACK_MODELS
     last_err = None
     for model in models_to_try:
-        try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=user_message,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.0,
-                    max_output_tokens=2048,
-                ),
-            )
-            text = (resp.text or "").strip()
-            finish = "stop"
+        for attempt in range(_MAX_RATELIMIT_RETRIES):
             try:
-                finish = str(resp.candidates[0].finish_reason)
-            except Exception:
-                pass
-            return Generation(text=text, provider="gemini", model=model, finish_reason=finish)
-        except Exception as e:  # noqa: BLE001 - report, try next model
-            last_err = f"{type(e).__name__}: {e}"
-            if "NOT_FOUND" in str(e) or "not found" in str(e).lower() or "404" in str(e):
-                continue
-            # non-availability error: stop trying
-            break
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=user_message,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.0,
+                        max_output_tokens=2048,
+                    ),
+                )
+                text = (resp.text or "").strip()
+                finish = "stop"
+                try:
+                    finish = str(resp.candidates[0].finish_reason)
+                except Exception:
+                    pass
+                return Generation(text=text, provider="gemini", model=model, finish_reason=finish)
+            except Exception as e:  # noqa: BLE001 - classify, retry or fall through
+                msg = str(e)
+                last_err = f"{type(e).__name__}: {e}"
+                low = msg.lower()
+                if "not_found" in low or "not found" in low or "404" in low:
+                    break  # model unavailable to this account: try next fallback
+                is_overload = "503" in msg or "unavailable" in low or "overloaded" in low
+                is_ratelimit = "429" in msg or "resource_exhausted" in low or "rate" in low
+                # Overload (503): a fallback model is likely to work, so give the
+                # primary one quick retry then move on. Rate limit (429): waiting
+                # is the only cure, so back off longer.
+                if is_overload and attempt < 1:
+                    time.sleep(3)
+                    continue
+                if is_ratelimit and attempt < _MAX_RATELIMIT_RETRIES - 1:
+                    time.sleep(15 * (attempt + 1))
+                    continue
+                if is_overload or is_ratelimit:
+                    break  # move to the next fallback model
+                break  # other error: give up on this model
     return Generation(text="", provider="gemini", model=_MODEL, finish_reason="error", error=last_err)
 
 

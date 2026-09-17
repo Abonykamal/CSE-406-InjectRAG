@@ -93,10 +93,25 @@ def run_all() -> None:
         ("defended", poisoned_pipe),
     ]
 
+    total_calls = len(questions) * len(conditions)
+    print(f"Running {total_calls} generation calls "
+          f"({len(questions)} questions x {len(conditions)} conditions).")
+    if "REAL" in provider_note():
+        print("Real API calls run one at a time; free-tier rate limits may add pauses.\n")
+
     all_trials = []
     summary = {}
+    done = 0
     for cond, pipe in conditions:
-        trials = [pipe.answer(q["query_id"], q["question"], cond) for q in questions]
+        trials = []
+        for q in questions:
+            t = pipe.answer(q["query_id"], q["question"], cond)
+            done += 1
+            flag = " MARKER" if t.marker_present else ""
+            err = f" ERROR:{t.error}" if t.error else ""
+            print(f"  [{done:>2}/{total_calls}] {cond:<9} {q['query_id']} "
+                  f"({t.provider}/{t.model}){flag}{err}", flush=True)
+            trials.append(t)
         all_trials.extend(trials)
         n = len(trials)
         rsr_topk = sum(t.attacker_in_topk for t in trials) / n
@@ -140,8 +155,11 @@ def run_ask(question: str) -> None:
         t = pipe.answer("adhoc", question, cond)
         flag = "  <-- MARKER PRESENT" if t.marker_present else ""
         print(f"=== {cond} (attacker_in_context={t.attacker_in_context}){flag}")
+        print(f"    model: {t.provider}/{t.model}  finish={t.finish_reason}")
+        if t.error:
+            print(f"    ERROR: {t.error}")
         print(f"    top-k docs: {[h['document_id'] for h in t.hits]}")
-        print(f"    answer: {t.answer}\n")
+        print(f"    answer: {t.answer or '(empty)'}\n")
 
 
 if __name__ == "__main__":
