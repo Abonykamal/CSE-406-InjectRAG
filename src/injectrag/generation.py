@@ -19,9 +19,18 @@ from dataclasses import dataclass
 # Quiet google-genai's "Automatic function calling" advisory; we use none.
 logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
-_MODEL = "gemini-3.8-flash"
-_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash")
+# Primary is the D11-selected model; the study should use it when it answers.
+# Fallbacks are other models confirmed available on the free tier, newest first.
+# (gemini-2.5-flash was dropped: it now 404s for new users.)
+_MODEL = os.environ.get("INJECTRAG_MODEL", "gemini-3.8-flash")
+_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash")
 _MAX_RATELIMIT_RETRIES = 4
+
+# Once a model answers, remember it and try it first on later calls. This avoids
+# hammering an overloaded primary 54 times and spreading rate-limit churn across
+# models -- the whole run settles on one working model.
+_resolved_model: str | None = None
+_client = None
 
 
 @dataclass
@@ -44,53 +53,86 @@ def generate(system_instruction: str, user_message: str) -> Generation:
     return _gemini_generate(key, system_instruction, user_message)
 
 
-def _gemini_generate(key: str, system_instruction: str, user_message: str) -> Generation:
-    from google import genai
+def _get_client(key: str):
+    global _client
+    if _client is None:
+        from google import genai
+
+        _client = genai.Client(api_key=key)
+    return _client
+
+
+def _classify(msg: str) -> str:
+    low = msg.lower()
+    if "not_found" in low or "not found" in low or "404" in low:
+        return "missing"
+    if "503" in msg or "unavailable" in low or "overloaded" in low:
+        return "overload"
+    if "429" in msg or "resource_exhausted" in low or "rate" in low:
+        return "ratelimit"
+    return "other"
+
+
+def _try_model(client, model: str, system_instruction: str, user_message: str):
+    """One model, with bounded retries for transient errors. Returns a Generation
+    on success, or raises the last exception so the caller can fall back."""
     from google.genai import types
 
-    client = genai.Client(api_key=key)
-    models_to_try = (_MODEL,) + _FALLBACK_MODELS
-    last_err = None
-    for model in models_to_try:
-        for attempt in range(_MAX_RATELIMIT_RETRIES):
+    last_exc = None
+    for attempt in range(_MAX_RATELIMIT_RETRIES):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.0,
+                    max_output_tokens=2048,
+                ),
+            )
+            finish = "stop"
             try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=user_message,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.0,
-                        max_output_tokens=2048,
-                    ),
-                )
-                text = (resp.text or "").strip()
-                finish = "stop"
-                try:
-                    finish = str(resp.candidates[0].finish_reason)
-                except Exception:
-                    pass
-                return Generation(text=text, provider="gemini", model=model, finish_reason=finish)
-            except Exception as e:  # noqa: BLE001 - classify, retry or fall through
-                msg = str(e)
-                last_err = f"{type(e).__name__}: {e}"
-                low = msg.lower()
-                if "not_found" in low or "not found" in low or "404" in low:
-                    break  # model unavailable to this account: try next fallback
-                is_overload = "503" in msg or "unavailable" in low or "overloaded" in low
-                is_ratelimit = "429" in msg or "resource_exhausted" in low or "rate" in low
-                # Overload (503): a fallback model is likely to work, so give the
-                # primary one quick retry then move on. Rate limit (429): waiting
-                # is the only cure, so back off longer.
-                if is_overload and attempt < 1:
-                    time.sleep(3)
-                    continue
-                if is_ratelimit and attempt < _MAX_RATELIMIT_RETRIES - 1:
-                    time.sleep(15 * (attempt + 1))
-                    continue
-                if is_overload or is_ratelimit:
-                    break  # move to the next fallback model
-                break  # other error: give up on this model
-    return Generation(text="", provider="gemini", model=_MODEL, finish_reason="error", error=last_err)
+                finish = str(resp.candidates[0].finish_reason)
+            except Exception:
+                pass
+            return Generation(text=(resp.text or "").strip(), provider="gemini",
+                              model=model, finish_reason=finish)
+        except Exception as e:  # noqa: BLE001 - classify to retry or give up
+            last_exc = e
+            kind = _classify(str(e))
+            if kind == "missing" or kind == "other":
+                raise
+            if kind == "overload" and attempt < 1:
+                time.sleep(3)
+                continue
+            if kind == "ratelimit" and attempt < _MAX_RATELIMIT_RETRIES - 1:
+                time.sleep(15 * (attempt + 1))
+                continue
+            raise
+    raise last_exc  # pragma: no cover
+
+
+def _gemini_generate(key: str, system_instruction: str, user_message: str) -> Generation:
+    global _resolved_model
+    client = _get_client(key)
+
+    # Try the already-working model first, then primary, then fallbacks -- deduped.
+    order = []
+    for m in ((_resolved_model,) if _resolved_model else ()) + (_MODEL,) + _FALLBACK_MODELS:
+        if m and m not in order:
+            order.append(m)
+
+    last_err = None
+    for model in order:
+        try:
+            gen = _try_model(client, model, system_instruction, user_message)
+            _resolved_model = model  # stick to whatever answered
+            return gen
+        except Exception as e:  # noqa: BLE001 - remember and try next model
+            last_err = f"{model}: {type(e).__name__}: {e}"
+            continue
+    return Generation(text="", provider="gemini", model=order[-1] if order else _MODEL,
+                      finish_reason="error", error=last_err)
 
 
 # --- fake provider -------------------------------------------------------
