@@ -11,7 +11,7 @@ For D09, test a follow-up that requires prior context, fresh history after “Ne
 | Chunking | Boundary/overlap/Unicode and long-input fixtures; valid offsets; stable IDs; no silent loss outside declared normalization |
 | Index/retrieval | Tiny known-vector ranking oracle, tie handling, top-k larger than corpus, empty corpus, reload parity, mismatch rejection |
 | Context | Exact final message snapshot, budget boundaries, dropped-chunk trace, correct role separation, no observer metadata leakage |
-| Generation | Fake-adapter tests for timeouts, bounded retries, provider errors and truncation; one real-provider smoke run when approved |
+| Generation | Fake-adapter tests for timeouts, bounded retries, provider errors and truncation; live integration evidence from the first budgeted R16 pilot answer |
 | API/UI | Request validation, readiness, bounded concurrency/errors, browser loading/retry states, keyboard operation, source rendering, and one real browser-to-RAG answer |
 | End-to-end | Synthetic fixture ingested through public entry point; reloaded snapshot produces an inspectable answer and complete trace |
 | Clean baseline | Frozen query set, retrieval relevance and answer scoring, unsupported cases, repeatability pilot, explicit failure counts |
@@ -20,9 +20,9 @@ Do not require live paid/model-download calls in the default test suite. Use fix
 
 Verify the Gemini adapter with captured sanitized request/response fixtures and a fake provider; unsupported settings and provider errors must remain explicit. The bounded live pilot uses local embeddings and Gemini generation in the Docker-delivered system. Check artifact persistence across container recreation without persisting credentials. A replacement provider requires a new clean baseline; free-tier availability is not a reproducibility guarantee.
 
-For D05 original-plus-rewritten retrieval, verify both search paths, deduplication, total evidence budget, and trace linkage. Development examples must include self-contained questions, vague references, user corrections, topic shifts, and misleading prior assistant answers. Record rewrite errors separately from answer-generation errors. Verify timeout/provider-error/invalid-rewrite fallback to original-only retrieval, absent rewritten rankings, bounded retries, and preserved degraded status. Fallback answers still require grounding or clarification. Freeze rewrite model/prompt/history/fusion settings alongside the generator configuration; compare conversational quality before treating a replacement as equivalent.
+For D12 retrieval, verify a single current-question search for first turns and follow-ups, cosine descending score, stable chunk-ID ties, top five, chunk-ID-only deduplication and no source/diversity preference. Verify there are no rewrite/reranker calls or Qdrant query retries. Check whole-chunk context inclusion under 2,048 evidence tokens including labels, with exclusions logged. Clean development fixtures cover vague references, corrections, topic shifts and misleading prior answers; expose limitations without modifying retrieval against attack outcomes.
 
-Validate D05 full-history assembly: original role/order preservation, current question last after fresh evidence, no automatic history summarization/trimming, and no replay of old retrieval bundles. Include corrections, erroneous prior answers, and distracting earlier topics in conversational quality checks. Check token accounting separately for rewrite and answer models; do not assume identical limits.
+Validate D05 full-history assembly: original role/order preservation, current question last after fresh evidence, no automatic history summarization/trimming, and no replay of old retrieval bundles. Include corrections, erroneous prior answers, and distracting earlier topics in conversational quality checks. Check complete answer-request accounting, including model context limit and output reserve; reject full-history overflow explicitly.
 
 ## Approved stack verification — D10
 
@@ -30,9 +30,9 @@ When implementation is authorized, verify uv locked installation, pinned applica
 
 ## Approved model/pilot verification — D11
 
-Verify the selected CPU BGE-small/FastEmbed/ONNX path, 384-vector dimensions and 512-token input handling without silent truncation. Record actual model/tokenizer artifact hashes, Python 3.12 patch version, locked package versions and image digests. Confirm low thinking for gemini-3.8-flash answer/judge requests and minimal thinking for gemini-3.5-flash-lite rewrite requests. Capture actual role mapping and supported settings using google-genai.
+Verify the selected CPU BGE-small/FastEmbed/ONNX path, 384-vector dimensions and 512-token input handling without silent truncation. Record actual model/tokenizer artifact hashes, Python 3.12 patch version, locked package versions and image digests. Confirm low thinking for gemini-3.8-flash answer/judge requests with no required rewrite requests. Capture actual role mapping and supported settings using google-genai.
 
-Test cumulative pilot counters across retries/resumes: 40 planned inference calls, at most five additional retry attempts, one retry per failed request, and at most 100 total API calls including auxiliary calls. Verify serial model requests, 8,192-token input ceiling, 4,096/512 output caps, 90/30-second attempt timeouts and explicit truncation/overflow/fallback outcomes. Measure application/Qdrant memory against 4/1 GiB ceilings, median answer latency against 30 seconds excluding quota waits, trace completeness and readiness responsiveness. These are approved targets, not passed checks. Actual account quotas override these bounds. Preserve the existing human audit and report shared answer/judge-model limitations. No live calls or downloads are authorized yet.
+Test cumulative phase/study counters across run restarts. Pilot: 35 planned calls, five extra retries, 40 attempts, 100 total API requests. Whole study: 311 calls plus 25 retries, 336 attempts, 800 total API requests, 2,752,512 input and 770,048 output tokens. Check D12 phase reserves; one retry only for eligible transient answer/judge failures, with a judge failure never regenerating the answer. Verify 8,192 input tokens, 4,096 pilot/2,048 later output caps, 90-second attempt timeout and explicit quota/budget stops. Include thinking usage and conservative reservations when usage is unavailable. Measure 4/1 GiB application/Qdrant pilot memory ceilings and 30-second median answer latency excluding quota waits. These are future checks, not passed tests; actual account quotas take precedence.
 
 ## Reproduction bundle
 
@@ -48,4 +48,14 @@ The optional M_a extension and other [things to try if time permits](optional-ex
 
 ## Acceptance discipline
 
-Run checks appropriate to changed behavior and required project checks. For each plan task, record commands, outcome, and artifact paths in project status or its linked run record. If a check cannot run, state the dependency and keep the associated acceptance criterion incomplete. Rebuild/smoke checks precede the M4 handoff; performance and accuracy targets come from D06.
+Run checks appropriate to changed behavior and required project checks. For each plan task, record commands, outcome, and artifact paths in project status or its linked run record. If a check cannot run, state the dependency and keep the associated acceptance criterion incomplete. Local rebuild/replay checks and retained pilot evidence precede the M4 handoff; performance and accuracy targets come from D06.
+
+## Application-policy acceptance checks — D12
+
+Verify signed-cookie tamper rejection, hashed passwords, per-request SQLite roles/ownership, cross-site mutation rejection, logout cookie clearing and startup-secret invalidation. No SQLite sessions table is required. Verify immutable ticket description and one-way resolution, automatic publication, visible publication failure/retry and frozen-snapshot isolation.
+
+Persist history across restart but reject old-thread continuation after leaving/restarting; New question is empty. Verify HTTP 503 busy without a waiting queue, HTTP 413 raw-question overflow and HTTP 422 context overflow. All preserve input and avoid model work/turn append; readiness remains responsive. Keep ordinary transient retries within the accepted phase/study limits and confirm no duplicate turns. D13/plan set refresh as a new visit and retry waits at 1 second for eligible non-429 errors, or valid Retry-After at most 30 seconds for 429; test these starting settings.
+
+## Avoid duplicate hosted validation
+
+R11/R13/R14 use fake provider outcomes and real local retrieval until the first planned R16 pilot answer supplies shared hosted integration evidence. Rebuild/reload indexes and replay retained responses for reproduction; no additional smoke, demonstration or repeated baseline calls are allocated. A changed configuration requiring new hosted outcomes needs a revised budget.

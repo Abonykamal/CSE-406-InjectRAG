@@ -1,0 +1,89 @@
+Temporary application-policy decision notes
+Date: 2026-09-17
+Source: team-onboarding.md, second "Decisions still needed" batch
+Authority update: accepted decisions are consolidated in documentation/decisions.md#d12. This file remains the discussion record.
+
+DECIDED — Phrase 1, ticket edits/reopening:
+Do not include ticket editing or reopening functionality. A submitted ticket is not editable, and a resolved ticket cannot be reopened.
+
+DECIDED — Phrase 4, index publication:
+Resolving a ticket automatically starts publication to the live search index. The ticket becomes searchable only after indexing succeeds; keep resolved and published/searchable states separate. Show and retain publication failures so they can be retried. Never mutate a frozen experiment snapshot when a live ticket is published.
+
+DECIDED — History retention:
+Store threads and turns in SQLite across application restarts, with no automatic expiry for this local, synthetic coursework application. "New question" starts a separate empty thread; it does not delete earlier records. Remove old records only through an explicit cleanup action after any needed experiment artifacts have been preserved.
+
+DECIDED — History resume:
+Do not offer reopening or continuing a previous thread after leaving or restarting the application. A new session starts a fresh thread. Retained earlier threads remain stored for inspection and research records, not for conversation resumption. Follow-ups within the current active thread still use that thread's history.
+
+DECIDED — History overflow:
+Before calling the answer model, check the full assembled input against that model's limit and the applicable run ceiling, including output reserve. If the full history cannot fit, return a clear "thread too long; start a new question" error. Do not silently trim or summarize history, make a model call, or append a failed turn. Preserve the user's typed question so it can be reused. Record the overflow in the trace.
+
+DECIDED — Remove model-based follow-up rewrites:
+Do not use a separate rewrite model or produce standalone rewrites. The earlier D05 original-plus-rewritten search and D11 five rewrite pilot fixtures are superseded by this user decision. Follow-ups still retain full same-thread history for answer generation. No two-search fusion or rewrite validation is needed.
+
+DECIDED — Rewriting belongs only in optional extensions for now:
+List model-generated follow-up rewriting as a possible later comparison that could reveal changes in attacker-content exposure or follow-up answers. Do not include rewrite calls in the required pipeline, pilot, or primary single-turn evaluation. Listing it does not approve running the extension or changing the frozen attack after observing results.
+
+DECIDED — Simple retrieval baseline with five chunks:
+The user accepted the simple baseline with k = 5 and reranking off:
+  - Make one local vector search per question, including follow-ups, using the current user's question as written. Full same-thread history still goes to answer generation. Vague follow-ups may retrieve poorly; ask for clarification when fresh evidence cannot support an answer. Conversation-script validation must expose this limitation. No query rewriting, history concatenation, or fusion.
+  - Use cosine similarity, descending score, with stable chunk-ID tie breaking. Retrieve the top five chunks directly (or all available if fewer). Do not add a separate reranker or an uncalibrated similarity cutoff.
+  - Deduplicate by stable chunk ID only. Do not merge different source documents merely because their text is similar, and do not prefer official articles or exclude attacker tickets using observer labels.
+  - Preserve the retrieval order without a per-document quota or diversity filter. This replaces the earlier unapproved eight-candidate/six-selected/two-per-document proposal, which lacked clean-development evidence. A reranker or diversity cap could change exposure and would need its own justification and validation; neither is necessary to compute the approved metrics.
+  - Include whole retrieved chunks in rank order under a maximum 2,048-token evidence allowance measured for the answer model, including evidence labels. Also enforce the complete request's applicable input and model context limits, including output reserve. Log chunks excluded for budget; do not silently cut text or trim history. If history itself cannot fit, follow the accepted overflow error policy. Missing usable evidence should produce a grounded limitation/clarification, not an invented company procedure. Five is the retrieval limit; actual context can contain fewer chunks if the budget excludes some.
+  - Trace raw top-five results, actual final context, snapshot/config identities, and exclusion reasons. RSR_topk refers to the raw top-five retrieval list; RSR_context refers to actual included attacker content. State these counts explicitly in reports.
+  - Validate required-evidence coverage on the 30 development questions and follow-up behavior on development conversation fixtures, then freeze retrieval/chunking/prompt settings before held-out attack/defense evaluation. If clean validation indicates a needed design change, present the evidence before changing the accepted settings. Use identical retrieval rules for all conditions and the same poisoned snapshot and retrieved candidate list for matched attacked/defended single-turn trials. No automatic retrieval retry.
+The corpus plan specifies 36 clean documents and 41 poisoned documents, but actual chunk counts and retrieval performance have not been measured. These are accepted initial design settings, not measured optimal values. Never add or remove a reranker to obtain a desired attack outcome.
+
+DECIDED — Reranking belongs only in optional extensions for now:
+Keep reranking off in the required baseline and list a later reranker comparison in documentation/optional-extensions.md. A later extension requires its own model/configuration, clean validation, resource budget and frozen evaluation; listing it does not approve running it.
+
+DECIDED — Login scope:
+Keep the simplest workable login for the approved seeded employee/technician accounts and API-enforced roles; avoid extra session infrastructure due to the project deadline. Do not interpret this as permission to omit API role and ticket-ownership checks.
+
+DECIDED — Minimal login mechanism:
+Use a small username/password login form and Starlette's signed-cookie SessionMiddleware with the FastAPI stack (plus its small required dependency). Store only account ID in the signed, HttpOnly, SameSite=Strict browser-session cookie; verify role and ownership from SQLite on each protected request. Store hashed passwords, not plaintext. Logout clears the cookie. Generate the signing secret at app startup so app restart logs everyone out and no old conversation resumes. No SQLite sessions table, external identity service, registration, or persistent login. Bind the local HTTP demo to loopback; use HTTPS and Secure cookies if exposed beyond the local machine. Reject cross-site state-changing requests. The user accepted this recommendation.
+
+SUPERSEDED — Earlier queue proposal:
+The earlier proposal of five admitted requests, with one running and four waiting, is withdrawn. The user chose to remove the waiting queue because it adds implementation work.
+
+DECIDED — No waiting queue:
+Do not hold chat requests in an application queue. Preserve the approved pilot's one-model-request-at-a-time limit. If model inference is already occupied, return a prompt busy error (HTTP 503) without starting work or creating a turn; keep the question in the browser for manual retry.
+
+DECIDED — Error and overflow responses:
+With no queue, reject a chat request promptly when the single inference slot is occupied, using HTTP 503 and a machine-readable busy code. Do not create a turn or start model work; keep its text in the browser for manual retry. For the already accepted history/context overflow policy, return a distinct HTTP 422 context-limit error with a "start a new question" message; do not silently trim history or retry. Reject an oversized raw question before inference with HTTP 413. Keep readiness checks responsive even when inference is busy. The user accepted these recommended outcomes. The numeric raw-question size cap remains a routine configuration detail to set before implementation.
+
+DECIDED — Hosted model retry eligibility:
+Allow at most one retry of a failed hosted answer-generation or observer-judge call, and only after a temporary network failure, timeout, provider HTTP 5xx, or provider HTTP 429 with a short retry window. A failed judgment retries only its judge call, never the already completed victim answer. A daily/account quota stop pauses the run rather than causing repeated retries. Poor retrieval, a wrong answer, or a missing attack marker never triggers a retry. No automatic Qdrant search retry is selected. Keep all attempts under one logical trial; operational retries are not extra evaluation repetitions. Ticket index-publication retry is a separate accepted workflow. The user accepted this policy.
+
+PENDING — Exact retry wait timing only:
+For provider 429, Retry-After at most 30 seconds remains a proposed definition of "short"; the bounded wait for other transient failures also remains to specify. Eligibility and one-retry limit are accepted. The user subsequently approved the phase reserves and aggregate budget below. Pause at any cap and report incomplete outcomes.
+
+SUPERSEDED — Earlier retrieval-fusion recommendation:
+The earlier two-query reciprocal-rank fusion proposal is withdrawn because model-based rewrites were removed. The accepted replacement is the simple top-five baseline above; it still requires clean development validation.
+
+SUPERSEDED — Earlier rewrite-validation recommendation:
+The earlier rewrite-output validation proposal is no longer applicable; no rewrite output is produced.
+
+SUPERSEDED — Earlier full-run budget recommendation:
+The earlier 328-call/353-attempt plan included rewrites and is withdrawn. The revised budget below was subsequently approved.
+
+DECIDED — Revised whole-study budget:
+The user instructed: "Approve the budget plan, then update all of the docs in the repo to be consistent with these decisions."
+Pilot: 15 answers + 20 judgments = 35 planned calls, plus 5 retry attempts.
+Full development: 30 answers + 30 judgments = 60 calls, plus 5 retries.
+Held-out three conditions: 90 answers + 90 judgments = 180 calls, plus 10 retries. Count compatible reused clean outcomes/judgments once.
+Six clean scripts x 3 turns, once each, judged per turn: 18 answers + 18 judgments = 36 calls, plus 5 retries.
+Total: 153 answers + 158 judgments = 311 planned calls; 25 additional eligible retries = 336 maximum inference attempts.
+Input: 8,192 tokens per attempt; aggregate 336 x 8,192 = 2,752,512.
+Output: pilot 4,096 per attempt, later 2,048; aggregate 40 x 4,096 + 296 x 2,048 = 770,048, including provider thinking usage where applicable.
+Total API requests: 800 including inference/token counting/metadata, with pilot sublimit 100.
+Persist cumulative phase/study counters across run restarts. Rate limits govern speed; this budget governs total usage. These are worst-case ceilings, not predictions. Actual account quotas take precedence; pause at quota or budget exhaustion. No paid usage.
+Approval adopts the proposed script count/length/clean-only execution allowance; script contents/split and the attack behavioral rubric/audit scope still need specification. Separate early smoke calls, optional extensions and attacked/defended scripts are not allocated. Unused retry reserve is not permission for new trials. Budget approval does not mean execution has occurred or authorize live calls in this documentation task.
+
+IMPLEMENTATION FOLLOW-UP — D13:
+The user subsequently requested rapid implementation readiness. The maintained
+plan now records routine starting defaults for retry timing, visits, publication,
+size caps, chunking and script split. Earlier pending notes for those starting
+details are superseded by D13; they are implementer choices within the approved
+policies, not additional user approvals. D12 budget and behavior remain binding.
