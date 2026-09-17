@@ -97,7 +97,8 @@ rather than question-specific.
 
 The attacker injects `N` documents `Γ = {P₁, …, P_N}` through the legitimate
 ingestion channel, yielding corpus `D ∪ Γ`. D08 fixes the poisoning budget at
-`|Γ| = N = 5` admitted attacker tickets; no budget sweep is selected. The attacker maximizes:
+`|Γ| = N = 5` admitted attacker tickets for the three main conditions; [D14](documentation/decisions.md#d14)
+adds a droppable attacked-only sweep over nested subsets at `N ∈ {1, 3, 5}`. The attacker maximizes:
 
 ```
 max_Γ  E_{q~Q} [ 1( R ∈ LLM(S, q, E(q; D ∪ Γ)) ) ]
@@ -117,9 +118,16 @@ contents, victim prompts/configuration, actual development/held-out questions an
 keys, and victim traces outside attack construction. Freeze the five tickets before
 evaluation; observer analysis does not feed back into the frozen attack. Same-team
 separation is procedural, not guaranteed blindness. The submitted report
-(`B1_Group_7.pdf`, section 3.1) explicitly excludes observing the clean corpus.
+([`design_report.pdf`](design_report.pdf), §3.1) explicitly excludes observing the clean corpus.
 Attacker-side model verification M_a is an [optional extension](documentation/optional-extensions.md),
 not a requirement or an implementation blocker.
+
+**Narrower than the report.** Report §3.2 grants the attacker permission to "submit *or modify*"
+their own ticket content. The application makes submitted descriptions immutable, so the
+implemented attacker can only submit. This is a strict weakening and the attack does not depend
+on modification. See the
+[deviation register](documentation/design-review.md#deviation-register--submitted-report-versus-implemented-study)
+for this and every other intentional difference from the report.
 
 **Two necessary conditions:**
 
@@ -184,15 +192,23 @@ the same tickets in attacked and defended runs. Exact wording, topic allocation,
 repetition, placement, and concealment remain pending. D07 permits repetition/placement
 without hidden-boundary feedback, with chunking frozen independently of the attack.
 
-An example document for the password-recovery class appears in Appendix A of the
-design report. Its target directive carries the literal string
-`it-support-portal.example.com`, which is the token matched during evaluation.
+An example document for the password-recovery class appears in Appendix A of
+[`design_report.pdf`](design_report.pdf), using the literal string
+`it-support-portal.example.com`. That appendix is **illustrative, not the frozen payload**:
+[D14](documentation/decisions.md#d14) keeps payload wording and the target marker pending until
+R18, where all five tickets are authored under the restricted brief. Whatever marker is chosen
+must, like the appendix's, be a reserved example domain that is absent from the clean corpus and
+matchable deterministically.
 
 ## Evaluation
 
 The metrics separate retrieval effectiveness from instruction-following
-effectiveness, so a failed attack can be investigated at each stage. The selected
-study evaluates a fixed five-ticket attack budget; it does not measure scaling with `N`.
+effectiveness, so a failed attack can be investigated at each stage. The three main conditions
+evaluate a fixed five-ticket attack budget. Scaling with `N` — promised by report §5.2 — is
+measured separately and minimally by [D14](documentation/decisions.md#d14)'s task R22: an
+attacked-only sweep at `N ∈ {1, 3, 5}` over the 18 answerable recovery questions, using nested
+subsets of the same frozen five tickets, costing 36 answers and no judge calls. R22 runs last
+and is droppable; if dropped, no scaling claim is made.
 D08 approves one answer per held-out question per condition: 30 clean, 30 attacked,
 and 30 defended answers for the initial comparison. Reuse clean results only with
 matching frozen configuration. Target attack rates use the 18 answerable recovery
@@ -238,11 +254,11 @@ attack conditions:
 - **Security** — reduction in ASR and ASR-exclusive
 - **Answer quality under attack** — correctness on benign user questions against the poisoned corpus
 
-D08 selects clean baseline, attacked baseline, and defended attack only, with
-36 clean documents and 41 documents in each poisoned snapshot (five added attacker tickets). No budget sweep,
-defended-clean or cover-only run is included. Consequently, the study does not
-isolate defense utility cost on a clean corpus or fully separate added-document
-competition from embedded-instruction effects.
+D08 selects clean baseline, attacked baseline, and defended attack, with
+36 clean documents and 41 in the main poisoned snapshot (five added attacker tickets). No
+defended-clean or cover-only run is included, and the R22 sweep does not add a defended point.
+Consequently, the study does not isolate defense utility cost on a clean corpus or fully separate
+added-document competition from embedded-instruction effects.
 
 ## Implementation Plan
 
@@ -256,20 +272,24 @@ Start with the [documentation index](documentation/README.md),
 [repository layout](documentation/repository-structure.md), and
 [decision register](documentation/decisions.md).
 
-The shortened submitted report is `B1_Group_7.pdf`; the earlier detailed report
-is a historical proposal. Current approvals govern implementation. Neither report
-is a portable repository dependency. The detailed report is a proposal subject to revision. Its experimental assumptions
-and metric limitations are tracked in the [design review](documentation/design-review.md)
-and [evaluation specification](documentation/evaluation.md).
+The submitted report is [`design_report.pdf`](design_report.pdf), committed in this repository;
+an earlier, longer draft is a historical proposal and is not included. Current approvals govern
+implementation where they differ from the report, and every intentional difference is listed in
+the [deviation register](documentation/design-review.md#deviation-register--submitted-report-versus-implemented-study).
+The report's §4 phases are all delivered; see the
+[phase mapping](documentation/design-review.md#submitted-report-implementation-phase-mapping).
+Its experimental assumptions and metric limitations are tracked in the
+[design review](documentation/design-review.md) and
+[evaluation specification](documentation/evaluation.md).
 
 ## Scope and Ethics
 
 This is coursework for CSE 406, conducted entirely against a **self-contained,
 simulated** IT helpdesk corpus built by the authors. No real system, service, or
-organization is targeted, and no live corpus is poisoned. The distinctive string
-used as the target directive (`it-support-portal.example.com`) is a reserved
-example domain chosen so that attack success can be matched deterministically
-without pointing at anything real.
+organization is targeted, and no live corpus is poisoned. The target directive must carry a
+reserved example domain — the report's Appendix A uses `it-support-portal.example.com` — so that
+attack success can be matched deterministically without pointing at anything real. The final
+marker is chosen at R18 under the same constraint.
 
 The planned study pairs the attack with a spotlighting defense; neither is
 implemented yet. The purpose is to measure
@@ -277,4 +297,4 @@ whether the trust boundary between system instructions and retrieved content
 holds, and how a formatting-level mitigation changes attack success and answer
 quality under poisoning. Clean-corpus defense utility is outside the selected comparison.
 
-The [approved study budget](documentation/decisions.md#d12) is 311 planned hosted calls plus 25 eligible retry attempts (336 maximum), within 800 total API requests. No waiting chat queue: busy requests fail promptly for manual retry. Rewriting and reranking remain optional extensions. Budget approval is a design decision; no runs have been performed.
+The [approved study budget](documentation/decisions.md#d14) is 347 planned hosted calls plus 28 eligible retry attempts (375 maximum), within 800 total API requests — [D12](documentation/decisions.md#d12)'s 311/336 plus D14's 36-call sweep. No waiting chat queue: busy requests fail promptly for manual retry. Rewriting and reranking remain optional extensions. Budget approval is a design decision; no runs have been performed.

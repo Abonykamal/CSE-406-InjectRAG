@@ -37,7 +37,7 @@ Use the current documentation index to discover new or renamed documents. Before
 | Implementation, testing, reproduction | `documentation/testing-and-reproducibility.md`; also local-development or API documentation if listed and present |
 | Whole-project review or replanning | All maintained documents listed in the documentation index |
 
-A missing or renamed file is not permission to invent its contents. Search the repository for its replacement; report an unresolved gap only to the extent it affects the request. The original Downloads PDF and private session-memory files are not required startup dependencies.
+A missing or renamed file is not permission to invent its contents. Search the repository for its replacement; report an unresolved gap only to the extent it affects the request. The submitted report is `design_report.pdf` in the repository root; the earlier longer draft and private session-memory files are not required startup dependencies.
 
 ## Apply the context and continue
 

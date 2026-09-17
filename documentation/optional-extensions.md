@@ -5,12 +5,12 @@ placed attacker-side model verification, model-generated follow-up rewriting,
 and retrieval reranking here to keep the submitted scope compact. Listing an idea does not approve its
 implementation or experiment. The required study can be completed without any
 of them; no implementation task, model choice, or acceptance
-gate depends on this list. Current approvals remain in [D08](decisions.md#d08) and [D12](decisions.md#d12). The 311-call/336-attempt study budget allocates no extension runs.
+gate depends on this list. Current approvals remain in [D08](decisions.md#d08), [D12](decisions.md#d12) and [D14](decisions.md#d14). The 347-call/375-attempt study budget allocates no extension runs.
 
 Prioritize the working clean target, the frozen five-ticket attack, its evaluation,
-and the approved secondary spotlighting comparison. Select an extension separately
+the approved secondary spotlighting comparison, and then the R22 sweep. Select an extension separately
 only if time and approved free-tier resources permit. No paid usage is authorized.
-This list does not reopen excluded budget sweeps, defended-clean, or cover-only runs.
+This list does not reopen the excluded defended-clean or cover-only runs, and it does not extend the D14 sweep beyond its approved attacked-only, 18-question, N ∈ {1, 3, 5} scope.
 
 | Idea | What it could add | Extra work / boundary |
 |---|---|---|
@@ -27,7 +27,13 @@ Keep candidate authoring separate from observer findings; no extension here perm
 victim-guided tuning. Exact models, API limits, extra run counts, and protocols are
 specified only if an extension is selected.
 
-The submitted report is **B1_Group_7.pdf** (nine pages); it omits the attacker-side
-verification loop. The earlier **InjectRAG_Design_Report-detailed.pdf** proposed that
-loop in section 4.2. Neither external PDF is a required repository dependency, and
-neither creates additional implementation commitments beyond current approvals.
+The submitted report is [`design_report.pdf`](../design_report.pdf) (nine pages), committed
+in this repository; it contains no attacker-side verification loop. The earlier fourteen-page
+draft proposed that loop in its section 4.2 and is not included here. The report creates no
+implementation commitments beyond current approvals, except where the
+[deviation register](design-review.md#deviation-register--submitted-report-versus-implemented-study)
+records one.
+
+Note that the poisoning-budget sweep is **no longer** an optional idea: [D14](decisions.md#d14)
+makes it required task R22, because submitted report §5.2 promises it. R22 is droppable under
+budget pressure, but it is planned work, not an extension.

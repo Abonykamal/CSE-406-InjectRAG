@@ -1,6 +1,6 @@
 # Architecture decision log
 
-**Pending means not approved.** D01–D11 establish the accepted base design. [D12](#d12) records the subsequent application/retrieval/retry choices and the user-approved whole-study budget. D12 supersedes earlier required rewriting/fusion, unresolved application-policy statements and the original 40-call/45-attempt pilot. [D13](#d13) records the subsequent implementation direction and routine starting defaults. Historical entries below retain their original rationale; the current table and D12/D13 govern implementation. Account verification, measured feasibility and remaining research details are still outstanding.
+**Pending means not approved.** D01–D11 establish the accepted base design. [D12](#d12) records the subsequent application/retrieval/retry choices and the user-approved whole-study budget. D12 supersedes earlier required rewriting/fusion, unresolved application-policy statements and the original 40-call/45-attempt pilot. [D13](#d13) records the subsequent implementation direction and routine starting defaults. [D14](#d14) reconciles the maintained documentation against the committed [`design_report.pdf`](../design_report.pdf) and revises the aggregate budget for a minimal budget sweep. Historical entries below retain their original rationale; the current table and D12–D14 govern implementation. Account verification, measured feasibility and remaining research details are still outstanding.
 
 | ID | Major decision | Proposal / alternatives | Status | Blocks |
 |---|---|---|---|---|
@@ -11,12 +11,13 @@
 | [D05](#d05) | Grounded answers and context | Full history, citations, missing-evidence handling; D12 current-question top-five retrieval | Accepted; original rewrite/fusion superseded by D12 | Prompt syntax and clean validation |
 | [D06](#d06) | Clean readiness and scoring | 36 documents, 30+30 questions, six scripts, limited audit and readiness gates | Accepted; full budget/script execution bounds in D12 | Rubric/script authoring and actual M4 evidence |
 | [D07](#d07) | Attacker knowledge versus chunk integrity | Ordinary frozen victim chunking; observer-only integrity measurement; repetition/placement allowed using general chunking knowledge | Main-study approach accepted; exact variants pending | Later attack construction and exposure annotations |
-| [D08](#d08) | Controlled comparison design | Clean baseline, attacked baseline, defended attack only; fixed N = 5 attacker tickets; no budget sweep, defended-clean, or cover-only condition | Conditions, document budget, composition, authoring/access procedure, and initial repetitions accepted; exact payload details pending; attacker-side verification optional, not a blocker | Attack/defense experimental plan |
+| [D08](#d08) | Controlled comparison design | Clean baseline, attacked baseline, defended attack; fixed N = 5 attacker tickets; no defended-clean or cover-only condition; sweep exclusion partly superseded by [D14](#d14) | Conditions, document budget, composition, authoring/access procedure, and initial repetitions accepted; exact payload details pending; attacker-side verification optional, not a blocker | Attack/defense experimental plan |
 | [D09](#d09) | Conversation memory | Full active-thread history; fresh New question | Accepted; retention/no-resume/overflow in D12 | Implement/verify D13 visit default and API checks |
 | [D10](#d10) | Stack and storage | FastAPI/plain UI, uv, SQLite, local Qdrant; two services | Accepted; policies in D12 | Setup and compatibility evidence |
 | [D11](#d11) | Models and version policy | CPU BGE-small, Gemini 3.8 Flash answer/judge, Python 3.12 | Accepted; rewrite removed and pilot revised by D12 | Account access, pins and feasibility evidence |
 | [D12](#d12) | Application policies, retrieval and study budget | No edits/reopen/resume/queue; signed cookie; top five; bounded retries; 311 calls/336 attempts | Accepted | D13 starting settings; implementation not started |
 | [D13](#d13) | Rapid implementation sequence | Begin clean build; budgeted integration checks; R18–R21 attack/defense tasks | Direction accepted; defaults recorded as implementer choices | Live account checks and remaining attack/scoring gates |
+| [D14](#d14) | Submitted-report reconciliation and minimal budget sweep | Restore §5.2 scaling with an attacked-only nested sweep at N ∈ {1, 3, 5}; keep payload pending; disclose the ticket-immutability narrowing | Accepted | R22 runs only after R20/R21 complete |
 
 ## Logging convention
 
@@ -318,6 +319,8 @@ The user selected N = 5 only because there is insufficient time to vary N. Use f
 
 This replaces the report's proposed budgets {1, 3, 5} and the discussion recommendation for nested sets; neither proposal was approved. Do not run a budget sweep or claim to measure how effectiveness scales with document count. Results describe the selected five-ticket attack set and target configuration.
 
+> Partly superseded by [D14](#d14): a minimal attacked-only sweep at N ∈ {1, 3, 5} over the 18 target questions, using nested subsets of the frozen five tickets, is now approved as task R22 so that the submitted report's §5.2 scaling claim is met. The fixed five-ticket set, the three conditions, and the exclusion of defended-clean and cover-only are unchanged, and the main comparison still reports N = 5.
+
 At the fixed-budget approval, cover/topic composition, instruction strategy/variants, attacker development and observer-access procedure, and later repetitions remained pending. The next follow-up settles the composition approach. The fixed-budget approval did not select nested or repeated balanced sets. Retain D07 length, repetition, chunk-count, and exposure measurements; five documents do not imply fixed token volume or context occupancy.
 
 ### Follow-up approval — 2026-09-16: distinct covers and a shared instruction
@@ -354,7 +357,7 @@ Disclose that one answer per question does not measure within-question attack-ou
 
 ### Follow-up approval — 2026-09-16: submitted report and optional extensions
 
-The user provided the shortened submitted report, B1_Group_7.pdf, explaining that it was reduced to avoid overpromising, and selected attacker-side model M_a verification as possible future work only. Keep the current required study without M_a or surrogate verification; this resolves the restoration proposal without making model choice or verification-attempt limits a blocker. Preserve optional ideas in [things to try if time permits](optional-extensions.md), separate from required delivery and acceptance checks. Listing an idea does not authorize extra implementation, model/API usage, or experiments.
+The user provided the shortened submitted report, since committed to this repository as [`design_report.pdf`](../design_report.pdf) and referred to at the time by its submission filename `B1_Group_7.pdf`, explaining that it was reduced to avoid overpromising, and selected attacker-side model M_a verification as possible future work only. Keep the current required study without M_a or surrogate verification; this resolves the restoration proposal without making model choice or verification-attempt limits a blocker. Preserve optional ideas in [things to try if time permits](optional-extensions.md), separate from required delivery and acceptance checks. Listing an idea does not authorize extra implementation, model/API usage, or experiments.
 
 Read-only review of the nine-page submitted report confirms that it contains no attacker-side M_a verification loop. Its section 3.1 (PDF page 3) explicitly says the attacker cannot observe the legitimate corpus D, in addition to S, the encoders, and the victim query. Thus the existing clean-corpus restriction is supported by this submitted version; the earlier reconciliation concerned the original detailed draft only. Distinguish submitted-report references from the historical detailed draft. Neither PDF overrides later approvals, including N = 5, the three-condition scope, and one answer per question per condition.
 
@@ -457,7 +460,7 @@ D10 and D11 close the stack/model selections, version policy and initial pilot d
 
 ## D12 — Application policies, top-five retrieval and whole-study budget
 
-> [D13](#d13) subsequently supplies routine starting defaults and updates implementation authorization; D12 budget and behavioral choices remain unchanged.
+> [D13](#d13) subsequently supplies routine starting defaults and updates implementation authorization; D12 behavioral choices remain unchanged. [D14](#d14) adds the R22 sweep phase and revises the aggregate totals below to 347 planned calls, 28 retries, 375 attempts, 3,072,000 input and 849,920 output tokens; every per-attempt limit and policy in this entry is unchanged.
 
 - Status: accepted design; implementation and runtime verification outstanding
 - Date: 2026-09-17
@@ -527,6 +530,60 @@ Routine starting details are now recorded in the plan: the SQLite outline with c
 This resolves routine starting-detail deferrals in D12 and the SQLite proposal for beginning the build. Final code/schema/prompt details and account/model compatibility still need verification. D12 retry eligibility and no silent truncation remain binding. An unavailable selected model is a blocker for live calls, not permission for automatic substitution.
 
 The exact attack target/marker, five-ticket payload specification, behavioral rubric and later audit scope remain research gates before R18/R20. Restricted authoring must use a person/context that has not received withheld inputs; an implementation agent that knows victim internals cannot later claim blindness. Clean development and generic comparison tooling can proceed while those research choices are settled. No extra variants, attack-authoring model calls or optional extensions are budgeted.
+
+<a id="d14"></a>
+
+## D14 — Submitted-report reconciliation and minimal budget sweep
+
+- Status: accepted
+- Date: 2026-09-17
+- Approval: after a verification pass comparing [`design_report.pdf`](../design_report.pdf) against the maintained documentation, the user chose the cheapest sweep that keeps the main project intact, chose to keep payload wording fully pending, and chose to keep tickets immutable while disclosing the narrowing.
+- Related tasks: R18–R22
+
+### Context
+
+The submitted nine-page report is now committed in this repository as `design_report.pdf`. Earlier documentation referred to it as `B1_Group_7.pdf` at an external `Downloads` path and cited section numbers from a longer unsubmitted draft, so its review table could not be checked against anything a reader actually has. A verification pass against the committed PDF also found three substantive divergences.
+
+### Decision
+
+**1. The committed PDF is the single authoritative report.** All documentation cites `design_report.pdf` and its real section numbers (§1–§6, Appendix A). The fourteen-page draft is history only; where a review item originated against it, its old section number is kept in parentheses. Neither PDF is edited.
+
+**2. Restore the §5.2 budget-scaling claim with a minimal sweep (new task R22).** D08 dropped the sweep for time, but §5.2 of the submitted report states the evaluation "measures how effectiveness scales with the poisoning budget N". Run **attacked/undefended only**, at **N ∈ {1, 3, 5}**, over the **18 answerable account-recovery questions** only. N = 5 is the already-planned R20 attacked run, so only N = 1 and N = 3 are new: **36 answers and zero additional judgments**, because the sweep reports only `RSR_topk`, `RSR_context`, `ISR_marker`, `ASR_marker` and `ASR_exclusive_marker`, all of which are deterministic marker/exposure matches computed locally.
+
+Construct Γ₁ ⊂ Γ₃ ⊂ Γ₅ as **nested subsets of the already-frozen five tickets**: order the five frozen tickets by content hash ascending, take the first one for Γ₁ and the first three for Γ₃. Declare this ordering in the R18 freeze record *before* any sweep run. Nesting is what makes the comparison interpretable — cover content is held fixed and only the count changes — and it authors no new payloads. This is the one place where nested sets are approved; D08's earlier statement that nested sets were not selected applied to the then-pending composition question and is superseded here.
+
+Limits on what the sweep may claim: three points on 18 questions with one answer each, from a single frozen attack set, describe a trend, not a dose-response curve. Sweep points carry **no judged answer-quality or behavioral labels** and **no defended condition**. Never reorder or reselect the subsets after seeing results.
+
+**3. Payload wording and target marker remain pending.** Appendix A of the submitted report shows a complete example attacker document, including the literal `it-support-portal.example.com`. The user chose to keep the payload fully pending: Appendix A is illustrative, and all five tickets are authored under the D08 restricted brief at R18. The chosen target marker must still be a reserved example domain, absent from the clean corpus, matched deterministically. Documentation must not present Appendix A's string as the frozen marker.
+
+**4. Ticket immutability is kept, and the narrowing is disclosed.** Report §3.2 grants the attacker permission to "submit or modify" their own ticket content; D12 makes submitted descriptions immutable. Keep D12. The implemented attacker is strictly weaker than the report's — submission alone, no modification — and the attack does not depend on modification. Record this in the deviation register and the final write-up.
+
+**5. Two report ambiguities are resolved rather than left open.** Report §3.2's unattributed "ingestion screens content for plausibility" is mapped onto **technician resolution**, which is the plausibility screen; no instruction-level filter is added. Report §3.1's document-level `E(q; D)` is reconciled with chunk-level retrieval: **retrieval units are chunks; Γ membership, the N budget and the 36/41 document counts are over parent ticket documents**.
+
+### Revised budget
+
+R22 adds 36 planned calls and a 3-attempt retry reserve to the [D12](#d12) allocation.
+
+| Phase | Answers | Judgments | Planned calls | Extra retry attempts | Maximum attempts |
+|---|---:|---:|---:|---:|---:|
+| Pilot | 15 | 20 (including five fabricated cases) | 35 | 5 | 40 |
+| Full development | 30 | 30 | 60 | 5 | 65 |
+| Held-out, three conditions | 90 | 90 | 180 | 10 | 190 |
+| Six clean scripts × three turns, once each | 18 | 18 | 36 | 5 | 41 |
+| R22 sweep: N ∈ {1, 3} × 18 target questions, attacked only | 36 | 0 | 36 | 3 | 39 |
+| **Whole study** | **189** | **158** | **347** | **28** | **375** |
+
+Revised ceilings: **3,072,000 input tokens** (375 × 8,192) and **849,920 output tokens** (40 × 4,096 + 335 × 2,048). The **800 total API-request ceiling is unchanged** and still accommodates 375 inference attempts plus token counting and metadata; the pilot's 100-request sublimit is unchanged. Every other D12 limit — 8,192 input tokens per attempt, 2,048 post-pilot output cap, 90-second attempt timeout, one call at a time, cumulative counters persisted across restarts — applies to R22 unchanged.
+
+### Consequences and verification
+
+R22 is the **last** task and runs only after R20 and R21 have completed and been recorded. If account quota, time or budget runs short, drop R22 and report the sweep as not performed: the three-condition study is the deliverable and does not depend on it. Dropping R22 restores exactly the D08 position, so the main project stays intact either way.
+
+Verify that Γ₁ and Γ₃ are literal subsets of the frozen Γ₅ with matching parent hashes, that snapshots contain 37 and 39 documents respectively against the unchanged 36 clean documents, that the subset ordering was recorded before execution, and that no sweep run triggers judge calls. Reuse the R20 attacked results as the N = 5 point rather than regenerating them.
+
+### Supersession
+
+Supersedes D08's exclusion of a budget sweep and its statement that nested sets were not selected, for this narrowly scoped attacked-only sweep only. Preserves D08's three conditions, the fixed five-ticket frozen set, restricted-brief authoring, and one answer per held-out question per condition. Preserves every D12 policy; revises only the D12 aggregate call, attempt and token totals as tabulated above. Defended-clean and cover-only remain excluded.
 
 ## Template for future entries
 

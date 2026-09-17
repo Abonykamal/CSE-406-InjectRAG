@@ -11,9 +11,10 @@ and does not approve new technology, experiments, or task ownership.
 4. [Implementation plan](../plans/draft-plan.md): dependencies, deliverables, and acceptance checks.
 
 Then read the documents relevant to your task through the [documentation index](README.md).
-The shortened submitted report is B1_Group_7.pdf; the detailed report is an earlier
-draft. Current approvals govern where the reports differ. Neither external PDF is
-needed to understand or implement the maintained plan.
+The submitted report is [`design_report.pdf`](../design_report.pdf) in this repository; an
+earlier, longer draft is not included and is not needed. Current approvals govern where
+the report and the plan differ, and every intentional difference is listed in the
+[deviation register](design-review.md#deviation-register--submitted-report-versus-implemented-study).
 
 ## Agreed delivery and study
 
@@ -29,8 +30,9 @@ needed to understand or implement the maintained plan.
   attacker tickets with distinct recovery-topic stories sharing one base instruction
   and directive. Only employee descriptions are attacker-controlled.
 - Three conditions: clean baseline, attacked baseline, defended attack. Initial
-  held-out evaluation uses one answer per question per condition. No budget sweep,
-  defended-clean, or cover-only run. M_a verification is optional future work.
+  held-out evaluation uses one answer per question per condition. No defended-clean
+  or cover-only run. M_a verification is optional future work. D14 adds one droppable
+  attacked-only sweep at N ∈ {1, 3, 5} over the 18 target questions, as task R22.
 - Attack construction uses a restricted brief without victim feedback, internal
   configuration, clean corpus contents, or actual evaluation questions/keys. Freeze
   tickets before victim testing. Observer inspection explains results without
@@ -64,7 +66,7 @@ onboarding or tune them against attack success. Existing approval gates still ap
 |---|---|
 | Target application | R01–R14: runtime, ingestion/retrieval/generation, ticket workflow, API/UI, and trace persistence. See [architecture](architecture.md) and [contracts](data-contracts.md). |
 | Corpus and evaluation | R04, R15–R17: canonical policy, clean documents, split questions/keys, scorer/audit, baseline and reproduction. See [corpus](corpus-and-baseline.md) and [evaluation](evaluation.md). |
-| Attack and secondary defense | R18–R21 after clean readiness: restricted-brief payload authoring, frozen poisoned snapshots, exposure/behavior scoring, and spotlighting comparison. See [design review](design-review.md). |
+| Attack and secondary defense | R18–R22 after clean readiness: restricted-brief payload authoring, frozen poisoned snapshots, exposure/behavior scoring, spotlighting comparison, and the droppable budget sweep. See [design review](design-review.md). |
 
 Agree named owners and immediate tasks as a team. Account for the attacker knowledge
 boundary when sharing material: someone who has already inspected withheld data
@@ -84,4 +86,4 @@ remain in [things to try if time permits](optional-extensions.md), outside compl
 - One current-question cosine search, top five, stable chunk-ID ties/deduplication; no rewriting, fusion or reranking. Whole-chunk evidence up to 2,048 tokens including labels. Rewriting/reranking are optional extensions.
 - No waiting chat queue: 503 busy, 413 oversized question, 422 context overflow; preserve input and create no failed turns.
 - At most one eligible transient answer/judge retry; no quality-based or automatic retrieval retries.
-- Budget approved: 311 planned calls + 25 retry attempts = 336 maximum, within 800 total API requests. Pilot is 35 planned/40 maximum, within 100 API requests. See [D12](decisions.md#d12) for phase/token caps and genuinely remaining details.
+- Budget approved: 347 planned calls + 28 retry attempts = 375 maximum, within 800 total API requests — D12's 311/336 plus [D14](decisions.md#d14)'s 36-call zero-judgment sweep. Pilot is 35 planned/40 maximum, within 100 API requests. See [D14](decisions.md#d14) for the current phase/token caps and [D12](decisions.md#d12) for the policies behind them.

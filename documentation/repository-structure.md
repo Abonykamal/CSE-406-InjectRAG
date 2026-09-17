@@ -78,8 +78,8 @@ Commit authored synthetic inputs, query definitions, prompts, configuration, man
 2. After local preflight under D13 (account checks gate hosted runs only): Python package, API/UI skeleton, dependency configuration, tests, and ignore rules.
 3. With ingestion/baseline tasks: data, manifests, prompts, and runtime configurations.
 4. At first execution: generated directories created by commands, never assumed to exist.
-5. After clean baseline: attack and experiment tasks R18–R21 in the existing implementation plan.
+5. After clean baseline: attack and experiment tasks R18–R22 in the existing implementation plan.
 
 D12 uses signed-cookie authentication without a SQLite sessions table. Keep accounts/tickets/threads/turns in application storage; publication bookkeeping is detailed in the [SQLite proposal](../sqlite-schema-plan.txt). No rewrite or reranker module is required. Persist phase/study usage counters and trial attempts in research artifacts across run restarts.
 
-Implement only packages needed by the current delivery batch. The plan now includes R18–R21 for the fixed attack/defense; no separate general planning phase or second application is required.
+Implement only packages needed by the current delivery batch. The plan now includes R18–R22 for the fixed attack/defense and its budget sweep; no separate general planning phase or second application is required.

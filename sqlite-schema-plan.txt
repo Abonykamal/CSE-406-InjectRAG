@@ -329,6 +329,8 @@ F. Cleanup: no automatic deletion of thread/turn history. Any explicit cleanup
 No application/database/index files are created by this planning document.
 
 Research budget counters are persistent run artifacts, separate from victim
-conversation tables: 311 planned calls, 25 retries, 336 inference attempts and
-800 total API requests, with D12 phase/token caps. Counter persistence enables
+conversation tables: 347 planned calls, 28 retries, 375 inference attempts and
+800 total API requests, with D12/D14 phase/token caps. The ledger needs five
+phase buckets, not four: D14 adds a sweep phase carrying 36 answers and zero
+judgments. Counter persistence enables
 resuming research accounting, not resuming old user conversations.

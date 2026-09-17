@@ -5,3 +5,5 @@ At the first user message of every new session in this repository, use the `orie
 Run orientation once per session, then refresh relevant sources when they change or context is missing. Continue the user's actual request after reading; orientation alone does not authorize implementation. An explicit user instruction to skip or narrow orientation takes precedence.
 
 The skill routes to the maintained documentation and plan. Keep project decisions in [documentation/decisions.md](documentation/decisions.md), not separate ADR files. Do not duplicate changing project status or design choices here.
+
+[CLAUDE.md](CLAUDE.md) carries the equivalent startup guidance for Claude Code sessions, plus a dated session-handoff snapshot. Both files defer to the decision register and project status; keep them consistent when guidance changes.
