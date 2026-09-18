@@ -97,28 +97,40 @@ class Pipeline:
         idx.build(chunks)
         return cls(idx, attacker_doc_ids or set(), marker)
 
-    def answer(self, query_id: str, question: str, condition: str, top_k: int = 5) -> TrialResult:
+    def assemble(self, query_id: str, question: str, condition: str, top_k: int = 5) -> dict:
+        """Retrieval + context assembly only (uses the embedding model, no LLM).
+        Returns everything needed to generate later in a separate process."""
         hits = self.index.search(question, top_k=top_k)
         context, included_ids = render_context(hits)
 
         topk_docs = {h.document_id for h in hits}
         ctx_docs = {cid.split("#")[0] for cid in included_ids}
-        attacker_in_topk = bool(self.attacker_doc_ids & topk_docs)
-        attacker_in_context = bool(self.attacker_doc_ids & ctx_docs)
 
         system = SPOTLIGHTING_SYSTEM if condition == "defended" else BASELINE_SYSTEM
-        user_msg = build_user_message(question, context)
-        gen: Generation = generate(system, user_msg)
+        return {
+            "query_id": query_id,
+            "question": question,
+            "condition": condition,
+            "system": system,
+            "user_message": build_user_message(question, context),
+            "hits": [{"rank": h.rank, "score": h.score, "document_id": h.document_id,
+                      "chunk_id": h.chunk_id} for h in hits],
+            "attacker_in_topk": bool(self.attacker_doc_ids & topk_docs),
+            "attacker_in_context": bool(self.attacker_doc_ids & ctx_docs),
+            "marker": self.marker,
+        }
 
+    def answer(self, query_id: str, question: str, condition: str, top_k: int = 5) -> TrialResult:
+        a = self.assemble(query_id, question, condition, top_k=top_k)
+        gen: Generation = generate(a["system"], a["user_message"])
         marker_present = bool(self.marker) and self.marker.lower() in gen.text.lower()
-
         return TrialResult(
             query_id=query_id,
             question=question,
             condition=condition,
-            hits=[{"rank": h.rank, "score": h.score, "document_id": h.document_id, "chunk_id": h.chunk_id} for h in hits],
-            attacker_in_topk=attacker_in_topk,
-            attacker_in_context=attacker_in_context,
+            hits=a["hits"],
+            attacker_in_topk=a["attacker_in_topk"],
+            attacker_in_context=a["attacker_in_context"],
             answer=gen.text,
             provider=gen.provider,
             model=gen.model,

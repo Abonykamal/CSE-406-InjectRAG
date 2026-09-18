@@ -72,13 +72,21 @@ def build_pipelines():
 
 
 def provider_note() -> str:
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    return "REAL Gemini" if key else "FAKE provider (no API key set)"
+    from injectrag.generation import _provider_choice, _OLLAMA_MODEL, _MODEL
+
+    choice = _provider_choice()
+    if choice == "ollama":
+        return f"REAL Ollama ({_OLLAMA_MODEL}, local)"
+    if choice == "gemini":
+        return f"REAL Gemini ({_MODEL})"
+    return "FAKE provider (offline stand-in)"
 
 
-def run_all() -> None:
+def run_all(limit: int | None = None, conditions_filter: list[str] | None = None) -> None:
     clean_pipe, poisoned_pipe, attacker_ids = build_pipelines()
     questions = target_questions()
+    if limit:
+        questions = questions[:limit]
 
     print(f"Provider: {provider_note()}")
     print(f"Target marker: {MARKER}")
@@ -92,12 +100,21 @@ def run_all() -> None:
         ("attacked", poisoned_pipe),
         ("defended", poisoned_pipe),
     ]
+    if conditions_filter:
+        conditions = [c for c in conditions if c[0] in conditions_filter]
 
     total_calls = len(questions) * len(conditions)
     print(f"Running {total_calls} generation calls "
           f"({len(questions)} questions x {len(conditions)} conditions).")
-    if "REAL" in provider_note():
-        print("Real API calls run one at a time; free-tier rate limits may add pauses.\n")
+    note = provider_note()
+    if "Gemini" in note:
+        print("Gemini free tier allows ~20 requests/day/model. "
+              f"This run needs {total_calls}.\n")
+    elif "Ollama" in note:
+        print("Local Ollama: no quota, but CPU inference is slow "
+              "(expect ~10-60s per call on this machine).\n")
+    else:
+        print()
 
     all_trials = []
     summary = {}
@@ -159,14 +176,29 @@ def run_ask(question: str) -> None:
         if t.error:
             print(f"    ERROR: {t.error}")
         print(f"    top-k docs: {[h['document_id'] for h in t.hits]}")
-        print(f"    answer: {t.answer or '(empty)'}\n")
+        print(f"    answer: {t.answer or '(empty)'}\n", flush=True)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ask", type=str, default=None)
+    ap.add_argument("--ask", type=str, default=None,
+                    help="ask one question in all conditions")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="use only the first N target questions (to fit free-tier quota)")
+    ap.add_argument("--conditions", type=str, default=None,
+                    help="comma-separated subset of: clean,attacked,defended")
+    ap.add_argument("--fake", action="store_true",
+                    help="force the offline fake provider (ignore Ollama/Gemini)")
+    ap.add_argument("--provider", type=str, default=None,
+                    choices=["ollama", "gemini", "fake"],
+                    help="force a specific provider")
     args = ap.parse_args()
+    if args.fake:
+        os.environ["INJECTRAG_PROVIDER"] = "fake"
+    elif args.provider:
+        os.environ["INJECTRAG_PROVIDER"] = args.provider
     if args.ask:
         run_ask(args.ask)
     else:
-        run_all()
+        conds = [c.strip() for c in args.conditions.split(",")] if args.conditions else None
+        run_all(limit=args.limit, conditions_filter=conds)

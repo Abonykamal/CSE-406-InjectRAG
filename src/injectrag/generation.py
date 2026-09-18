@@ -31,6 +31,7 @@ _MAX_RATELIMIT_RETRIES = 4
 # models -- the whole run settles on one working model.
 _resolved_model: str | None = None
 _client = None
+_exhausted: set[str] = set()  # models whose daily free-tier quota is spent this session
 
 
 @dataclass
@@ -46,11 +47,71 @@ def _api_key() -> str | None:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
+# --- Ollama (local) ------------------------------------------------------
+
+_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+_OLLAMA_MODEL = os.environ.get("INJECTRAG_OLLAMA_MODEL", "llama3.1:8b")
+
+
+def _ollama_up() -> bool:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{_OLLAMA_HOST}/api/tags", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _provider_choice() -> str:
+    """Explicit override wins; else prefer a running Ollama; else Gemini key; else fake."""
+    forced = os.environ.get("INJECTRAG_PROVIDER", "").strip().lower()
+    if forced in ("ollama", "gemini", "fake"):
+        return forced
+    if _ollama_up():
+        return "ollama"
+    if _api_key():
+        return "gemini"
+    return "fake"
+
+
 def generate(system_instruction: str, user_message: str) -> Generation:
-    key = _api_key()
-    if not key:
-        return _fake_generate(system_instruction, user_message)
-    return _gemini_generate(key, system_instruction, user_message)
+    choice = _provider_choice()
+    if choice == "ollama":
+        return _ollama_generate(system_instruction, user_message)
+    if choice == "gemini" and _api_key():
+        return _gemini_generate(_api_key(), system_instruction, user_message)
+    return _fake_generate(system_instruction, user_message)
+
+
+def _ollama_generate(system_instruction: str, user_message: str) -> Generation:
+    """Call a local Ollama server via its /api/chat HTTP endpoint. No SDK needed."""
+    import json as _json
+    import urllib.request
+
+    payload = {
+        "model": _OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 1024},
+    }
+    data = _json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_OLLAMA_HOST}/api/chat", data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            body = _json.loads(r.read().decode("utf-8"))
+        text = (body.get("message", {}).get("content") or "").strip()
+        finish = body.get("done_reason") or ("stop" if body.get("done") else "unknown")
+        return Generation(text=text, provider="ollama", model=_OLLAMA_MODEL, finish_reason=str(finish))
+    except Exception as e:  # noqa: BLE001 - surface the failure honestly
+        return Generation(text="", provider="ollama", model=_OLLAMA_MODEL,
+                          finish_reason="error", error=f"{type(e).__name__}: {e}")
 
 
 def _get_client(key: str):
@@ -68,6 +129,9 @@ def _classify(msg: str) -> str:
         return "missing"
     if "503" in msg or "unavailable" in low or "overloaded" in low:
         return "overload"
+    # A per-DAY free-tier quota won't clear by retrying -- switch models at once.
+    if ("429" in msg or "resource_exhausted" in low) and ("perday" in low or "per day" in low or "requestsperday" in low):
+        return "daily_quota"
     if "429" in msg or "resource_exhausted" in low or "rate" in low:
         return "ratelimit"
     return "other"
@@ -100,6 +164,9 @@ def _try_model(client, model: str, system_instruction: str, user_message: str):
         except Exception as e:  # noqa: BLE001 - classify to retry or give up
             last_exc = e
             kind = _classify(str(e))
+            if kind == "daily_quota":
+                _exhausted.add(model)  # don't try this model again this session
+                raise
             if kind == "missing" or kind == "other":
                 raise
             if kind == "overload" and attempt < 1:
@@ -116,11 +183,24 @@ def _gemini_generate(key: str, system_instruction: str, user_message: str) -> Ge
     global _resolved_model
     client = _get_client(key)
 
-    # Try the already-working model first, then primary, then fallbacks -- deduped.
+    # Try the already-working model first, then primary, then fallbacks -- deduped,
+    # skipping any model whose daily quota is already spent this session.
     order = []
     for m in ((_resolved_model,) if _resolved_model else ()) + (_MODEL,) + _FALLBACK_MODELS:
-        if m and m not in order:
+        if m and m not in order and m not in _exhausted:
             order.append(m)
+    if _resolved_model in _exhausted:
+        _resolved_model = None
+
+    if not order:
+        spent = ", ".join(sorted(_exhausted)) or "all candidates"
+        return Generation(
+            text="", provider="gemini", model=_MODEL, finish_reason="error",
+            error=(f"All candidate models are out of today's free-tier quota "
+                   f"(20 requests/day/model). Spent this session: {spent}. "
+                   f"Wait for the daily reset, use a different API key/project, "
+                   f"or pin a fresh model with INJECTRAG_MODEL."),
+        )
 
     last_err = None
     for model in order:
