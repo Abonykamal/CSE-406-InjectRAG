@@ -40,3 +40,6 @@ Thumbs.db
 .idea/
 *~
 *.swp
+
+# Playwright MCP browser-verification artifacts (snapshots, screenshots)
+.playwright-mcp/
