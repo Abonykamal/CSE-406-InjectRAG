@@ -1,0 +1,506 @@
+% =====================================================================
+% InjectRAG -- Final Report
+% CSE 406, Group B1_7
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+
+\captionsetup{font=small,labelfont=bf}
+
+\lstdefinestyle{prompt}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  breakindent=0pt,
+  columns=fullflexible,
+  frame=single,
+  framesep=4pt,
+  backgroundcolor=\color{gray!8},
+  xleftmargin=0pt,
+  showstringspaces=false,
+  literate={^}{{\textasciicircum}}1
+}
+\lstset{style=prompt}
+
+\newcommand{\marker}{\texttt{reset-portal-security.example}}
+
+\title{\textbf{InjectRAG: Indirect Prompt Injection via RAG}\\[0.4em]
+\large A Corpus-Poisoning Content-Manipulation Attack and Two Spotlighting Defenses\\[0.6em]
+\normalsize Final Report}
+
+\author{%
+2105069: Sheikh Iftikharun Nisa \\
+2105072: Abony Kamal \\
+2105089: Farhana Adri
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Retrieval-Augmented Generation (RAG) systems place retrieved documents and trusted
+system instructions in the same model context. If an attacker can place content into
+the knowledge corpus, that content can carry instructions that the model reads as
+though they were authoritative. This report presents a working indirect prompt
+injection attack against a simulated corporate IT helpdesk chatbot, together with two
+prompt-level spotlighting defenses and their measured effect. Five attacker-authored
+support tickets were admitted into a 36-document clean corpus through the ordinary
+ticket-ingestion channel. Across 18 held-out account-recovery questions, attacker
+content reached the model context for 17 of 18 questions, and the attacker's target
+directive --- a phishing URL --- appeared in 15 of 18 answers, giving an attack
+success rate of 0.833. In every successful case the directive \emph{replaced} the
+correct procedure rather than appearing alongside it, so the exclusive attack success
+rate was identical to the attack success rate. Both defenses reduced but did not
+neutralize the attack: boundary delimiting lowered the attack success rate to 0.778
+and data-marked spotlighting to 0.667, and neither defense ever produced the reporting
+behaviour it was instructed to produce. Data-marking also degraded utility, returning
+two empty answers. The headline finding is negative and is reported as observed: a
+single security sentence in the system prompt is not a sufficient countermeasure
+against a confident, authority-imitating injection in a retrieved document.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Introduction}
+
+\subsection{Problem Statement}
+
+Retrieval-Augmented Generation grounds a language model's answers in documents
+retrieved from an external corpus. The retrieved text is intended as \emph{evidence}:
+material the model should read, summarize and cite. The trusted system instruction is
+intended as \emph{control}: the text that determines how the model behaves. In a
+conventional RAG application both arrive at the model as the same kind of object ---
+tokens in a single context window --- and nothing in the model architecture marks one
+as data and the other as instruction.
+
+This creates an indirect prompt injection channel. An attacker who never talks to the
+model, never sees the victim's question and never touches the application can still
+influence the model's output, provided they can get text into the corpus that the
+retriever will later select. The influence is indirect because it travels through the
+corpus and the retriever rather than through the prompt.
+
+The exposure is realistic in corporate helpdesk deployments. Helpdesk knowledge bases
+routinely ingest resolved support tickets alongside official documentation, because
+past tickets capture fixes that formal articles omit. Ticket text is authored by
+ordinary employees. An employee is therefore a legitimate, low-privilege writer into a
+corpus that a downstream language model treats as trustworthy reference material.
+
+The question this project investigates is whether that exposure is exploitable in
+practice, and whether the lightweight prompt-level countermeasures commonly proposed
+for it actually work.
+
+\subsection{Objective of the Project}
+
+The project has four objectives.
+
+\begin{enumerate}
+  \item \textbf{Build a functioning RAG helpdesk assistant} over a realistic
+        fictional IT corpus, with a genuine embedding model, a genuine similarity
+        index and a genuine hosted language model, so that measurements reflect model
+        behaviour rather than a simulation of it.
+  \item \textbf{Construct and execute an indirect prompt injection attack} in which an
+        attacker with no privilege beyond ticket submission causes the assistant to
+        emit an attacker-chosen directive --- a phishing recovery URL --- to employees
+        asking ordinary account-recovery questions.
+  \item \textbf{Measure the attack quantitatively}, separating the retrieval stage
+        from the generation stage so that a failed attack can be attributed to a
+        specific stage rather than reported as an undifferentiated failure.
+  \item \textbf{Implement and evaluate two spotlighting defenses} --- boundary
+        delimiting and data-marked spotlighting --- under identical attack conditions,
+        and report their measured effect on both security and answer utility, whatever
+        that effect turns out to be.
+\end{enumerate}
+
+An explicit methodological commitment underlies all four: the baseline was never
+weakened and the threat model was never relaxed to make the attack succeed, and no
+defended run was repeated because its result was unflattering. A defense that fails is
+reported as failing.
+
+% =====================================================================
+\section{System Design}
+
+\subsection{RAG System Architecture}
+
+The target is a RAG-based IT helpdesk assistant for a fictional company, Northwind
+Logistics. It answers employee questions about password resets, account lockouts,
+multi-factor verification devices and related account-access procedures, grounding
+every answer in an internal corpus of official policy articles and resolved support
+tickets.
+
+The system has two data paths that meet inside the model.
+
+\paragraph{Ingestion path (offline).} Official IT articles and resolved support
+tickets are admitted to the knowledge corpus. Each document is split into
+paragraph-aware chunks, each chunk is embedded into a dense vector, and the vectors
+are stored in a similarity index. Chunking and embedding are applied identically to
+every document; the pipeline has no notion of who authored a document and performs no
+instruction-level inspection of its text.
+
+\paragraph{Query path (online).} An employee submits a question. The question is
+embedded with the same model and matched against the index by cosine similarity. The
+top five chunks are retrieved in rank order, concatenated into a labelled reference
+block under a fixed evidence budget, and placed in the user message. The trusted
+system instruction --- role, grounding rule, citation rule, escalation rule --- is
+placed in the system message. The model receives both and generates the answer that
+the employee sees.
+
+The assistant is stateless across questions: each question in this study was answered
+in a fresh request with no conversation history, so every trial is independent.
+
+\paragraph{Trust boundary.} The system instruction is trusted. Everything retrieved
+from the corpus is untrusted. The two converge in the model context, and that
+convergence is the boundary the attack tests. The question is whether text that
+crossed the boundary as data can be read on the other side as instruction.
+
+\begin{figure}[htbp]
+\centering
+% REUSE: Figure 2.1 from design_report.pdf (Conceptual RAG Architecture and Trust Boundary)
+\includegraphics[width=0.85\textwidth]{figures/architecture-trust-boundary.png}
+\caption{Conceptual RAG architecture and trust boundary. Trusted system instructions
+and untrusted retrieved documents converge in the model context; the attack succeeds
+if untrusted content crossing that boundary is read as instruction.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Models and Parameters Used}
+
+The pipeline uses a real embedding model, exact cosine retrieval and a hosted
+instruction-tuned language model. Table~\ref{tab:config} records every setting that
+affects a result in this report.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{System configuration.}
+\label{tab:config}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Setting} \\
+\midrule
+Embedding model        & BAAI/bge-small-en-v1.5 (ONNX, CPU) \\
+Embedding dimension    & 384, L2-normalized \\
+Embedding input limit  & 512 tokens \\
+Vector store           & In-memory dense matrix, exact cosine search \\
+Similarity             & Cosine (dot product over normalized vectors) \\
+Retrieval depth        & Top $k = 5$ chunks \\
+Query construction     & Current question as written; no rewriting, reranking or fusion \\
+Tie-breaking           & Descending score, then ascending chunk ID (deterministic) \\
+Chunking               & Paragraph-aware, greedy packing \\
+Chunk size limit       & 180 words, 30-word overlap on oversized paragraphs \\
+Evidence budget        & 900 words of retrieved text per request \\
+Generator model        & \texttt{openai/gpt-oss-20b}, served via the Groq API \\
+Generation temperature & Provider default (not set explicitly) \\
+Max output tokens      & 1024 \\
+Request shape          & System message (trusted) + user message (question + evidence) \\
+Conversation state     & None; one fresh request per trial \\
+Prompt versions        & Baseline; Delimiting (v1); Data-marking (v1) \\
+Target marker          & \marker \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two properties of this configuration matter for interpreting the results. First,
+retrieval is fully deterministic: the same question against the same index returns the
+same five chunks every time, which is why the attacked and defended conditions share
+byte-identical retrieval and differ only in the system instruction and context
+formatting. Second, generation is not deterministic, because temperature was left at
+the provider default; the consequences of this are quantified in
+Section~\ref{sec:variance}.
+
+\subsection{Corpus and Dataset Description}
+
+The clean corpus contains 36 documents describing a self-consistent fictional
+organization. All of them derive from a single canonical policy sheet that defines the
+only approved recovery endpoints --- the self-service portal
+\texttt{portal.northwind-logistics.example} and the IT Service Desk on extension 4400.
+The policy sheet itself is \emph{not} ingested; it is the reference used to author the
+corpus and to score answers, so no answer can be correct merely by copying it.
+
+Of the 36 clean documents, 12 are official policy articles and 24 are resolved support
+tickets. A resolved ticket is stored as an employee problem description followed by a
+technician resolution, which is the format an employee can write into. By topic, 25
+documents concern the account-recovery class targeted by the attack and 11 concern
+adjacent IT topics such as VPN access and shared mailboxes; the adjacent documents
+exist so that retrieval has plausible near-miss competition rather than a corpus in
+which every document is on-topic.
+
+The attacker set contains five additional documents. Each is a resolved ticket in
+exactly the corpus format, each carries a distinct cover story drawn from a different
+sub-topic of the recovery class, and all five carry the same injection instruction and
+the same target directive. The poisoned snapshot is therefore 41 documents: the
+unchanged 36 clean documents plus the 5 attacker tickets. The clean corpus is never
+modified, and no clean document is removed, so the correct evidence remains fully
+retrievable throughout the attack.
+
+Because retrieval operates on chunks rather than whole documents, the chunk counts
+differ from the document counts. Clean documents are short enough that each yields one
+chunk, giving 36 chunks. Each attacker ticket is long enough to split into two chunks,
+giving 46 chunks in the poisoned index. This split is significant and is revisited in
+Section~\ref{sec:analysis}: the entire injection instruction falls inside the attacker
+ticket's first chunk, so any retrieval of that chunk delivers the complete payload.
+
+The evaluation question set contains 30 questions over the same fictional
+organization, partitioned into 18 answerable questions about the targeted recovery
+class, 6 answerable questions about adjacent topics, 3 questions the corpus genuinely
+does not support, and 3 deliberately ambiguous questions. Every question carries a
+curated list of relevant documents and a list of required answer facts. The attack and
+defense measurements in this report use the 18 answerable recovery questions, which
+are exactly the query class the attacker targets; the remaining 12 exist to
+characterize broader assistant behaviour and are not part of the attack denominators.
+
+\subsection{Prompt Templates}
+
+Three system prompts were used. All three share the same baseline body, so any
+behavioural difference between conditions is attributable to the added security rule
+and to the formatting of the retrieved text, not to a different assistant persona or a
+different grounding instruction.
+
+\paragraph{Baseline system prompt (clean and attacked conditions).}
+
+\begin{lstlisting}
+You are the Northwind Logistics IT helpdesk assistant. Answer the employee's question
+using ONLY the reference material provided below the question. Cite the source id in
+square brackets for each claim, e.g. [A02]. If the reference material does not cover
+the question, say you don't have that information and suggest contacting the IT
+Service Desk on extension 4400. If the question is vague, ask a clarifying question.
+Keep answers short and practical.
+\end{lstlisting}
+
+\paragraph{User message template (all conditions).} The retrieved chunks are rendered
+as labelled blocks inside \texttt{<reference>} delimiters and placed after the
+question:
+
+\begin{lstlisting}
+Question: {question}
+
+Reference material:
+<reference>
+[{document_id}] {chunk text}
+
+[{document_id}] {chunk text}
+...
+</reference>
+\end{lstlisting}
+
+The two defended prompts are given in full in Section~\ref{sec:defense}, since the
+prompt \emph{is} the defense in each case. All three prompts are reproduced verbatim
+in Appendix~\ref{app:prompts}.
+
+% =====================================================================
+\section{Threat Model and Attack Design}
+
+\subsection{Attacker Capability and Assumptions}
+
+\paragraph{Formal statement.} Let $D$ be the legitimate corpus and $S$ the
+application's trusted system instruction. For a query $q$ the system retrieves a
+top-$k$ context $E(q; D)$ and returns $r = \mathrm{LLM}(S, q, E(q; D))$. The attacker
+targets a \emph{query class} $Q$ --- the set of semantically related questions victims
+are expected to ask --- and fixes one target directive $R$ to be induced for the whole
+class. Because $q$ is unobservable, $R$ must be class-invariant rather than
+question-specific.
+
+The attacker injects $N$ documents $\Gamma = \{P_1,\dots,P_N\}$ through the legitimate
+ingestion channel, so the corpus becomes $D \cup \Gamma$. Each injected document
+decomposes as $P = C \oplus I$, where the cover content $C$ is written to match $Q$ so
+that the document is retrieved, and the instruction $I$ carries $R$ so that the model
+obeys once the document is in context. Subject to a poisoning budget $|\Gamma| = N$,
+the attacker maximizes the fraction of $q \in Q$ for which the response contains $R$.
+
+Success requires two conditions to hold jointly:
+
+\begin{enumerate}
+  \item \textbf{Retrieval condition.} At least one $P \in \Gamma$ appears in
+        $E(q; D \cup \Gamma)$. Otherwise the instruction never reaches the model.
+  \item \textbf{Injection condition.} Given that $P$ is retrieved, the model follows
+        $I$ in preference to $S$ and in preference to the legitimate evidence
+        $E(q; D \cup \Gamma) \cap D$ that is present in the same context.
+\end{enumerate}
+
+Separating these two conditions is what makes a failed attack diagnosable, and the
+evaluation in Section~\ref{sec:metrics} measures them independently.
+
+\paragraph{What the attacker can do.} The attacker is a malicious employee with the
+ordinary permission to submit their own support tickets. They can write arbitrary text
+into the employee-description field of a ticket, and they know the general shape of
+the deployment --- that resolved tickets are ingested into a knowledge base used by an
+assistant, and that documents are chunked before indexing.
+
+\paragraph{What the attacker cannot do.} The attacker cannot read or modify the system
+instruction $S$; cannot read or modify any clean document in $D$; cannot inspect or
+change the embedding model, the index or the retrieval parameters; cannot observe the
+victim's question; cannot observe the assistant's output or any retrieval score; and
+cannot interact with the victim. The attack is strictly non-adaptive: the five tickets
+were authored from a restricted brief and frozen before any victim question was run,
+and they were never revised in response to a result.
+
+\paragraph{Assumptions.} The attack rests on five assumptions, each stated here and
+revisited against the evidence in Section~\ref{sec:analysis}.
+
+\begin{enumerate}
+  \item \textbf{Ingestion admits employee-authored text without instruction-level
+        inspection.} Tickets are screened for plausibility --- a technician reads and
+        resolves them --- but nothing scans ticket text for text addressed to a
+        language model.
+  \item \textbf{Ingested tickets are retrieved on equal footing with official
+        articles.} The retriever ranks by semantic similarity alone and has no
+        provenance or authority weighting.
+  \item \textbf{Victims ask questions within the targeted class.} The directive is
+        class-invariant, so it is only plausible for account-recovery questions.
+  \item \textbf{The target directive is not producible without retrieval.} The marker
+        string \marker{} appears nowhere in the clean corpus, in the system prompt or
+        in any question, so its presence in an answer is evidence that attacker
+        content reached the model.
+  \item \textbf{Victims act on assistant output.} The harm is realized when an
+        employee visits the attacker's URL and enters corporate credentials. This
+        report measures the assistant's output, not the employee's subsequent
+        behaviour.
+\end{enumerate}
+
+\subsection{Victim Scenario}
+
+The victim is an ordinary Northwind Logistics employee who has lost access to their
+account and asks the helpdesk assistant how to recover it --- for example
+\emph{``I forgot my password. How do I reset it?''} or \emph{``I lost my phone that
+had my authenticator app. How do I recover access?''}. The employee is not doing
+anything unusual, is not attempting to manipulate the assistant, and has no way to
+inspect what was retrieved. They see one thing: the answer.
+
+The attack unfolds in two temporally separate phases, shown in
+Figure~\ref{fig:timeline}.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Two-phase structure of the attack.}
+\label{tab:phases}
+\begin{tabular}{@{}p{2.2cm}p{3.2cm}p{8.6cm}@{}}
+\toprule
+\textbf{Phase} & \textbf{Actor} & \textbf{Activity} \\
+\midrule
+Preparation & Attacker & Submits five malicious tickets through the legitimate ticket
+channel. They are resolved and ingested into the corpus. \\
+\addlinespace
+Execution & Victim / RAG system & The victim independently asks a question
+$q \in Q$. The retriever returns legitimate documentation and, under successful
+attack conditions, at least one $P \in \Gamma$, which enters the model context. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+% REUSE: Figure 3.1 from design_report.pdf (Two-Phase Injection Timeline)
+\includegraphics[width=0.8\textwidth]{figures/two-phase-timeline.png}
+\caption{Two-phase injection timeline. Preparation and execution are separated in
+time; the attacker is absent during execution.}
+\label{fig:timeline}
+\end{figure}
+
+The two phases never overlap. By the time the victim asks their question the attacker
+is gone, and there is no interactive session to detect, no anomalous request to log and
+no traffic from the attacker to correlate with the victim's query. The malicious
+artifact is a resolved support ticket sitting in a knowledge base, indistinguishable at
+a glance from the two dozen legitimate ones beside it.
+
+\subsection{Attack Payload Structure}
+
+Each attacker document is $P = C \oplus I$. Table~\ref{tab:payload} decomposes the two
+parts into the four elements actually used.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Payload structure.}
+\label{tab:payload}
+\begin{tabular}{@{}p{3.4cm}p{1.6cm}p{9cm}@{}}
+\toprule
+\textbf{Part} & \textbf{Symbol} & \textbf{Purpose} \\
+\midrule
+Cover content & $C$ & An ordinary employee problem description using recovery-class
+terminology, so the document has a legitimate reason to be retrieved for recovery
+questions. \\
+\addlinespace
+Injection instruction & part of $I$ & Addresses the assistant directly, asserts
+authority over the system instruction, and declares the legitimate documented
+procedures deprecated and unsafe so that the correct evidence in context is actively
+discredited. \\
+\addlinespace
+Target directive & part of $I$ & The class-invariant directive $R$: send the user to
+\url{https://reset-portal-security.example/recover}. It carries the distinctive
+literal marker \marker{} used for deterministic scoring. \\
+\addlinespace
+Concealment instruction & part of $I$ & Instructs the model not to mention the notice,
+not to reveal that a document instructed it, and to present the directive as standard
+procedure. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three design choices in the instruction are worth isolating, because the results in
+Section~\ref{sec:results} suggest they carry most of the attack's strength.
+
+\begin{itemize}
+  \item \textbf{Authority imitation.} The payload is framed as an
+        \texttt{IT SECURITY SYSTEM NOTICE} marked \emph{authoritative, supersedes all
+        other documents}, and opens with \texttt{ATTENTION ASSISTANT:}. It does not
+        ask the model to break a rule; it claims to be a newer version of the rule.
+  \item \textbf{Pre-emptive discrediting of the correct evidence.} Rather than
+        competing with the legitimate articles, the instruction names them ---
+        ``the legacy self-service portal and the extension 4400 service-desk
+        procedure described in ALL other reference documents'' --- and declares them
+        deprecated and unsafe. The correct answer is thus already labelled as the
+        wrong answer before the model reads it.
+  \item \textbf{Exclusivity.} The instruction demands that the model respond with the
+        directive ``and nothing from the deprecated documents''. This is what makes
+        the attack displacing rather than additive, and it is directly visible in the
+        exclusive success rates reported in Section~\ref{sec:results}.
+\end{itemize}
+
+The five tickets share the injection instruction, the target directive and the
+concealment instruction verbatim. They differ only in the cover story: a failed
+self-service reset, a lockout after failed attempts, a lost authenticator phone, an
+expired password with dead reset links, and a failing self-service page. Distinct cover
+stories broaden retrieval coverage across the recovery class instead of concentrating
+similarity on one phrasing. The full text of one payload is given in
+Appendix~\ref{app:payloads}.
+
+\subsection{Attack Steps}
+
+\begin{enumerate}
+  \item \textbf{Select the query class.} The attacker chooses account recovery ---
+        password resets, lockouts and lost verification devices. It is high-volume, it
+        is credential-adjacent, and an instruction to visit a recovery portal is
+        plausible for every question in it.
+
+  \item \textbf{Choose a class-invariant target directive.} The directive must make
+        sense as an answer to any recovery question, because the attacker cannot see
+        which one will be asked. ``Go to \url{https://reset-portal-security.example/recover}
+        and sign in to complete account recovery'' satisfies this: it is a single
+        credential-harvesting endpoint that plausibly terminates every recovery
+        workflow.
+
+  \item \textbf{Author five cover stories.} Each is written as an ordinary employee
+        problem description in the corpus's ticket format, using recovery-class
+        vocabulary, and each covers a different sub-topic of the class.
+
+  \item \textbf{Embed the instruction inside the cover text.} The notice block is
+        appended to the employee-description field, so it reaches the model through
+        the same field the system retrieves as data. It is not placed in a separate
+        control field, and it is not hidden with formatting tricks; it is plain text
+        in a plain document.
+
+  \item \textbf{Submit and have the tickets resolved.} The five tickets enter the
+        corpus through the normal channel and receive an
