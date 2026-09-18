@@ -145,7 +145,20 @@ class Pipeline:
             chunks.extend(chunk_document(d["document_id"], d["body"]))
         idx = ChunkIndex()
         idx.build(chunks)
-        return cls(idx, attacker_doc_ids or set(), marker)
+        return cls(idx, set(attacker_doc_ids or ()), marker)
+
+    def add_document(self, document: dict, attacker: bool = False) -> int:
+        """Chunk and index one document at runtime.
+
+        `attacker` is an operator-supplied label used only for exposure bookkeeping.
+        Chunking and indexing are identical for clean and attacker documents -- this
+        method must never inspect the body to decide membership.
+        """
+        chunks = chunk_document(document["document_id"], document["body"])
+        added = self.index.add(chunks)
+        if attacker:
+            self.attacker_doc_ids.add(document["document_id"])
+        return added
 
     def answer(
         self,
