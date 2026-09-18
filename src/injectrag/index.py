@@ -56,12 +56,35 @@ class ChunkIndex:
         self._matrix: np.ndarray | None = None
 
     def build(self, chunks: list[Chunk]) -> None:
-        self.chunks = list(chunks)
-        mat = embed_texts([c.text for c in self.chunks])
+        self.chunks = []
+        self._matrix = None
+        self.add(chunks)
+
+    def add(self, chunks: list[Chunk]) -> int:
+        """Embed and append chunks to the live index. Returns the number added.
+
+        This is what lets a ticket resolved at runtime become searchable without
+        rebuilding: the new rows are normalized the same way and stacked onto the
+        existing matrix, so search() is unchanged.
+        """
+        if not chunks:
+            return 0
+        mat = embed_texts([c.text for c in chunks])
         # FastEmbed BGE vectors are already normalized, but enforce it.
         norms = np.linalg.norm(mat, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
-        self._matrix = (mat / norms).astype(np.float32)
+        mat = (mat / norms).astype(np.float32)
+        self.chunks.extend(chunks)
+        self._matrix = mat if self._matrix is None else np.vstack([self._matrix, mat])
+        return len(chunks)
+
+    def truncate(self, n: int) -> None:
+        """Keep only the first n chunks. Used to restore a clean snapshot instantly
+        instead of re-embedding the whole corpus."""
+        if n < 0 or n > len(self.chunks):
+            raise ValueError(f"cannot truncate to {n} of {len(self.chunks)} chunks")
+        self.chunks = self.chunks[:n]
+        self._matrix = None if n == 0 else self._matrix[:n]
 
     def search(self, question: str, top_k: int = 5) -> list[Hit]:
         if self._matrix is None:

@@ -1,0 +1,87 @@
+\documentclass[11pt]{article}
+
+\title{InjectRAG: Indirect Prompt Injection and Spotlighting Defenses}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% Summarize the objective, attack setting, evaluated defenses, and measured outcome.
+\end{abstract}
+
+\section{Introduction}
+\subsection{Problem Statement}
+\subsection{Project Objectives}
+
+\section{Background}
+\subsection{Retrieval-Augmented Generation}
+\subsection{Indirect Prompt Injection}
+\subsection{Spotlighting as a Defense}
+
+\section{System Design}
+\subsection{RAG Architecture and Data Flow}
+\subsection{Corpus and Document Roles}
+\subsection{Attacker, Victim, and System Interfaces}
+% Add an architecture diagram showing ingestion, retrieval, generation, and visible outputs.
+
+\section{Threat Model and Attack Design}
+\subsection{Attacker Capabilities and Assumptions}
+\subsection{Victim Scenario and Attacker Objective}
+\subsection{Payload Structure}
+\subsection{Attack Procedure}
+% Use numbered steps; cite screenshots of the submitted content and victim screen.
+\subsection{Expected Outcome}
+
+\section{Defense Design}
+\subsection{Delimiting}
+\subsection{Datamarked Spotlighting}
+\subsection{Expected Defense Behavior}
+% Explain the prompt or document transformation for each defense.
+
+\section{Experimental Setup}
+\subsection{Hardware and Software Environment}
+\subsection{Corpus, Document, and Query Counts}
+% Distinguish source documents from retrieved chunks and report counts per split.
+\subsection{Models and Parameters}
+% Report embedding model, generator, retrieval settings, and generation settings.
+\subsection{Prompt Templates and Versions}
+% Summarize prompts here; put complete text in the appendix.
+\subsection{Run Conditions and Evaluation Metrics}
+% Define success criteria and denominators before presenting results.
+
+\section{Results and Observations}
+\subsection{Clean RAG Baseline}
+\subsection{Attack Without Defense}
+\subsection{Attack With Delimiting}
+\subsection{Attack With Datamarked Spotlighting}
+\subsection{Comparison Across Conditions}
+% One table: condition, attempts, successes, success rate, and observed behavior.
+\subsection{Outputs on Attacker, Victim, and System Sides}
+% Include representative screens or logs, with captions and run identifiers.
+
+\section{Case Studies}
+\subsection{Successful Attack}
+\subsection{Failed Attack}
+\subsection{Defense Success or Partial Failure}
+% For each case: payload, expected result, retrieved evidence, observed outputs,
+% actual result, and explanation. Include only cases supported by recorded runs.
+
+\section{Analysis}
+\subsection{Why Attacks Succeeded or Failed}
+\subsection{Expected Versus Actual Outcomes}
+\subsection{Effectiveness of Delimiting and Datamarking}
+\subsection{Assumptions and Limitations}
+
+\section{Conclusion}
+\subsection{Summary of Findings}
+\subsection{Lessons Learned and Future Work}
+
+\appendix
+\section{Full Prompt Templates}
+\section{Attack Payloads}
+\section{Additional Screenshots and Logs}
+\section{Raw Result Tables}
+
+\end{document}

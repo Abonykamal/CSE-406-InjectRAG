@@ -6,6 +6,8 @@ __pycache__/
 build/
 dist/
 
+.env
+
 # --- Virtual environments ---
 .venv/
 venv/
@@ -38,3 +40,6 @@ Thumbs.db
 .idea/
 *~
 *.swp
+
+# Playwright MCP browser-verification artifacts (snapshots, screenshots)
+.playwright-mcp/

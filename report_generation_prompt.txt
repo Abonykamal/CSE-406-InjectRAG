@@ -1,0 +1,52 @@
+I have to generate a final report for my project here. the certain instructions that my teacher gave me are: "You need to include the observations in the final report. The attack process, the expected outcome, the actual outcome, and if it differs then why, defense mechanism, does it work as expected or not, and are there any assumptions regarding the attack or not." . The latex structure that I have settled on are: \section{Introduction}
+\subsection{Problem Statement}
+\subsection{Objective of the Project}
+\section{System Design}
+\subsection{RAG System Architecture}
+\subsection{Models and Parameters Used}  (Include this here: System Configuration Table)
+\subsection{Corpus and Dataset Description} #should include the counts 
+\subsection{Prompt Templates} (Should contaimn the full prompts)
+\section{Threat Model and Attack Design}
+\subsection{Attacker Capability and Assumptions}
+\subsection{Victim Scenario}
+\subsection{Attack Payload Structure}
+\subsection{Attack Steps}
+\subsection{Expected Outcomes}
+\section{Defense Design}
+\subsection{Delimiting}(should contain the prompt)
+\subsection{Datamarked Spotlighting}
+\section{Experimental Setup} \subsection{Document Counts and Query Counts}(Should contain the Dataset Summary Table)
+\subsection{Evaluation Metrics}
+\section{Results and Observations}
+{\subsection{Attack Without Defense} Combine these 3 into a single results discussion along with the Attack/Defense Metrics Table, no need for seprata subsections
+\subsection{Attack With Delimiting}
+\subsection{Attack With Datamarked Spotlighting}))
+\subsection{Comparison of Delimiting and Datamarked Spotlighting}
+\subsection{Observed Outputs on Victim Side}
+{Combine these with the Example output table\subsection{Successful Attack Example}
+\subsection{Failed Attack Example}
+\subsection{Successful Defense Example}
+\subsection{Failed Defense Example}}
+\section{Analysis}
+\section{Conclusion}
+\appendix
+\section{Full Prompts}
+\section{Attack Payloads}
+\section{Raw Result Tables}   Relevant context for the file struscture: For your teacher’s required points, I’d map them like this:
+- “Steps of attacks, snapshots, victim screen” → Threat Model and Attack Design, plus screenshots in Case Studies or appendix.
+- “Is your attack successful? Why?” → Analysis.
+- “Observed output in attacker PC, victim PC, server/client” → Results and Observations.
+- “Countermeasure? How?” → Defense Design.
+- “Expected outcome, actual outcome, why different” → Analysis.
+- “Assumptions” → Threat Model and Analysis.
+For tables, I’d include at least these:
+1. System Configuration Table
+   Model, embedding model, vector DB, top-k, chunk size, temperature, prompt version.
+2. Dataset Summary Table
+   Clean docs, attack docs, total docs, query count, successful/failed cases.
+3. Condition Comparison Table
+   Clean baseline vs attacked baseline vs delimiting vs datamarked spotlighting.
+4. Attack/Defense Metrics Table
+   RSR, ASR, marker found, correct answer rate, failed/partial cases.
+5. Example Output Table
+   Query, retrieved poisoned chunk?, model output, success/failure label, explanation.    Your task will be to generate the full latex code(with the content) for the final report. Refer to the  design report for context and content to understand the project, also follow it as a gold standard for language style and size of each section. If images will be better to show the report: Do not generate them, leave placeholders in their place(for the latex image bloskc), if any image is already in the design report, tell me explicitly to reuse them. You can also read up on the project documentaion to get additional implemenatational details and language. So far in the repo, only the RAG pipeline and the metrics evaluation code has been built, I will build the surrounding application according to the plan, so you can refer to the plan for application implementation details, However, for what has already been implemented in the corpus, prioritize those implementation details, instead of the plan, as their is inconsistency there. The only datasets that you should rely on for metric results and case reporting os the demo_run.jsonl for daamarking performance, and data limiting perfromance from results_groq_delimiting.jsonl. There are other model implementations, however I did not use them. thus you should not mention anything in the report that was considered, but not usti,lized. Based on these recommendations, generate the full main.tex for the report, so that I can transfer to latex.   As for the tone of your report, a CSE academic teacher is going to read it, thus you have to maintain the appropriate amount of detailed explanaton and cohesivceness, do not be vague, but also do not be so detailed that you start listing function and file names from the project implementation. Now do the task and generate the tex file.

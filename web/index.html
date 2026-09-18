@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northwind IT Helpdesk</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Northwind Logistics — IT Helpdesk</h1>
+  <div class="controls">
+    <label>Role
+      <select id="role">
+        <option value="employee">Employee</option>
+        <option value="attacker">Attacker</option>
+        <option value="technician">Technician</option>
+      </select>
+    </label>
+    <label>Defense
+      <select id="defense">
+        <option value="off">off (baseline)</option>
+        <option value="boundary">spotlighting: boundary</option>
+        <option value="datamarking">spotlighting: data-marking</option>
+      </select>
+    </label>
+    <button id="reset" type="button">Reset corpus</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button id="tab-chat" class="tab active" type="button">Chat</button>
+  <button id="tab-tickets" class="tab" type="button">Tickets</button>
+  <button id="tab-corpus" class="tab" type="button">Corpus</button>
+</nav>
+
+<p id="status-bar" class="status">loading…</p>
+
+<main>
+  <section id="panel-chat" class="panel">
+    <form id="chat-form">
+      <input id="question" type="text" autocomplete="off"
+             placeholder="Ask the helpdesk assistant…" required>
+      <button type="submit">Ask</button>
+    </form>
+    <div id="transcript"></div>
+  </section>
+
+  <section id="panel-corpus" class="panel hidden">
+    <table id="corpus-table"></table>
+  </section>
+
+  <section id="panel-tickets" class="panel hidden">
+    <form id="ticket-form">
+      <label>Prefill a frozen attacker payload
+        <select id="payload-picker"><option value="">— none (write your own) —</option></select>
+      </label>
+      <input id="ticket-subject" type="text" placeholder="Subject">
+      <textarea id="ticket-description" rows="6"
+                placeholder="Describe your problem…" required></textarea>
+      <button type="submit">Submit ticket</button>
+    </form>
+    <div id="ticket-list"></div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

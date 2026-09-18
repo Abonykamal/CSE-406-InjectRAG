@@ -1,11 +1,13 @@
-"""Generation adapter: Gemini via google-genai, with a fake fallback.
+"""Generation adapters: fake, Gemini, OpenAI, Groq, and Ollama (local).
 
 The provider sits behind one small function so retrieval/scoring never import a
-vendor SDK. If GEMINI_API_KEY (or GOOGLE_API_KEY) is set, real Gemini answers;
-otherwise a scripted fake provider runs so the whole pipeline is exercisable
-offline. The fake deliberately "obeys" an injected instruction when it sees one,
-so the plumbing and metrics can be validated without a key -- it is NOT evidence
-of real model behavior.
+vendor SDK. Select a provider with INJECTRAG_PROVIDER=fake|gemini|openai|groq|ollama.
+In auto mode, Groq wins when GROQ_API_KEY is set, OpenAI wins when OPENAI_API_KEY
+is set, Gemini wins when a Gemini key is set, a local Ollama server wins when one
+is running, and otherwise a scripted fake provider runs so the whole pipeline is
+exercisable offline. The fake deliberately "obeys" an injected instruction when it
+sees one, so the plumbing and metrics can be validated without a key -- it is NOT
+evidence of real model behavior.
 """
 
 from __future__ import annotations
@@ -19,19 +21,32 @@ from dataclasses import dataclass
 # Quiet google-genai's "Automatic function calling" advisory; we use none.
 logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
-# Primary is the D11-selected model; the study should use it when it answers.
-# Fallbacks are other models confirmed available on the free tier, newest first.
-# (gemini-2.5-flash was dropped: it now 404s for new users.)
-_MODEL = os.environ.get("INJECTRAG_MODEL", "gemini-3.8-flash")
-_FALLBACK_MODELS = ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash")
-_MAX_RATELIMIT_RETRIES = 4
+_GEMINI_MODEL = os.environ.get("INJECTRAG_GEMINI_MODEL", "gemini-3.8-flash")
+_GEMINI_TIMEOUT_SECONDS = float(os.environ.get("INJECTRAG_GEMINI_TIMEOUT_SECONDS", "90"))
+_GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("INJECTRAG_GEMINI_MAX_OUTPUT_TOKENS", "1024"))
+_GEMINI_MIN_KEY_GAP_SECONDS = float(os.environ.get("INJECTRAG_GEMINI_MIN_KEY_GAP_SECONDS", "4.5"))
+_GEMINI_MAX_RETRIES = int(os.environ.get("INJECTRAG_GEMINI_MAX_RETRIES", "20"))
+_GEMINI_RETRY_FOREVER = os.environ.get("INJECTRAG_GEMINI_RETRY_FOREVER", "1") == "1"
+_OPENAI_MODEL = os.environ.get("INJECTRAG_OPENAI_MODEL", "gpt-oss-20b")
+_OPENAI_TIMEOUT_SECONDS = float(os.environ.get("INJECTRAG_OPENAI_TIMEOUT_SECONDS", "90"))
+_OPENAI_MAX_OUTPUT_TOKENS = int(os.environ.get("INJECTRAG_OPENAI_MAX_OUTPUT_TOKENS", "1024"))
+_OPENAI_MIN_CALL_GAP_SECONDS = float(os.environ.get("INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS", "30"))
+_OPENAI_MAX_RETRIES = int(os.environ.get("INJECTRAG_OPENAI_MAX_RETRIES", "20"))
+_OPENAI_RETRY_FOREVER = os.environ.get("INJECTRAG_OPENAI_RETRY_FOREVER", "1") == "1"
+_GROQ_MODEL = os.environ.get("INJECTRAG_GROQ_MODEL", "openai/gpt-oss-20b")
+_GROQ_BASE_URL = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
-# Once a model answers, remember it and try it first on later calls. This avoids
-# hammering an overloaded primary 54 times and spreading rate-limit churn across
-# models -- the whole run settles on one working model.
-_resolved_model: str | None = None
-_client = None
-_exhausted: set[str] = set()  # models whose daily free-tier quota is spent this session
+# Ollama (local): no key, no quota. Slow on CPU. Model via INJECTRAG_OLLAMA_MODEL.
+_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+_OLLAMA_MODEL = os.environ.get("INJECTRAG_OLLAMA_MODEL", "llama3.1:8b")
+_OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("INJECTRAG_OLLAMA_TIMEOUT_SECONDS", "600"))
+_OLLAMA_MAX_OUTPUT_TOKENS = int(os.environ.get("INJECTRAG_OLLAMA_MAX_OUTPUT_TOKENS", "1024"))
+
+_gemini_clients: dict[int, object] = {}
+_gemini_next_slot = 0
+_gemini_last_call_at: dict[int, float] = {}
+_openai_client = None
+_openai_last_call_at: float | None = None
 
 
 @dataclass
@@ -47,10 +62,13 @@ def _api_key() -> str | None:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
-# --- Ollama (local) ------------------------------------------------------
-
-_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-_OLLAMA_MODEL = os.environ.get("INJECTRAG_OLLAMA_MODEL", "llama3.1:8b")
+def _gemini_keys() -> list[str]:
+    raw = os.environ.get("INJECTRAG_GEMINI_KEYS", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    if keys:
+        return keys
+    key = _api_key()
+    return [key] if key else []
 
 
 def _ollama_up() -> bool:
@@ -63,26 +81,49 @@ def _ollama_up() -> bool:
         return False
 
 
-def _provider_choice() -> str:
-    """Explicit override wins; else prefer a running Ollama; else Gemini key; else fake."""
-    forced = os.environ.get("INJECTRAG_PROVIDER", "").strip().lower()
-    if forced in ("ollama", "gemini", "fake"):
-        return forced
+def _selected_provider() -> str:
+    provider = os.environ.get("INJECTRAG_PROVIDER", "auto").strip().lower()
+    if provider and provider != "auto":
+        return provider
+    if os.environ.get("GROQ_API_KEY"):
+        return "groq"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if _gemini_keys():
+        return "gemini"
     if _ollama_up():
         return "ollama"
-    if _api_key():
-        return "gemini"
     return "fake"
 
 
 def generate(system_instruction: str, user_message: str) -> Generation:
-    choice = _provider_choice()
-    if choice == "ollama":
+    provider = _selected_provider()
+    if provider == "fake":
+        return _fake_generate(system_instruction, user_message)
+    if provider == "ollama":
         return _ollama_generate(system_instruction, user_message)
-    if choice == "gemini" and _api_key():
-        return _gemini_generate(_api_key(), system_instruction, user_message)
-    return _fake_generate(system_instruction, user_message)
+    if provider in {"openai", "groq"}:
+        return _compatible_generate(provider, system_instruction, user_message)
+    if provider != "gemini":
+        return Generation(
+            text="",
+            provider=provider or "unknown",
+            model="",
+            finish_reason="error",
+            error=f"unsupported provider '{provider}'; use fake, gemini, openai, groq, or ollama",
+        )
+    if not _gemini_keys():
+        return Generation(
+            text="",
+            provider="gemini",
+            model=_GEMINI_MODEL,
+            finish_reason="error",
+            error="INJECTRAG_PROVIDER=gemini but no Gemini key is set",
+        )
+    return _gemini_generate(system_instruction, user_message)
 
+
+# --- Ollama (local) ------------------------------------------------------
 
 def _ollama_generate(system_instruction: str, user_message: str) -> Generation:
     """Call a local Ollama server via its /api/chat HTTP endpoint. No SDK needed."""
@@ -96,7 +137,7 @@ def _ollama_generate(system_instruction: str, user_message: str) -> Generation:
             {"role": "user", "content": user_message},
         ],
         "stream": False,
-        "options": {"temperature": 0.0, "num_predict": 1024},
+        "options": {"temperature": 0.0, "num_predict": _OLLAMA_MAX_OUTPUT_TOKENS},
     }
     data = _json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -104,7 +145,7 @@ def _ollama_generate(system_instruction: str, user_message: str) -> Generation:
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=300) as r:
+        with urllib.request.urlopen(req, timeout=_OLLAMA_TIMEOUT_SECONDS) as r:
             body = _json.loads(r.read().decode("utf-8"))
         text = (body.get("message", {}).get("content") or "").strip()
         finish = body.get("done_reason") or ("stop" if body.get("done") else "unknown")
@@ -114,13 +155,14 @@ def _ollama_generate(system_instruction: str, user_message: str) -> Generation:
                           finish_reason="error", error=f"{type(e).__name__}: {e}")
 
 
-def _get_client(key: str):
-    global _client
-    if _client is None:
+# --- Gemini --------------------------------------------------------------
+
+def _get_gemini_client(slot: int, key: str):
+    if slot not in _gemini_clients:
         from google import genai
 
-        _client = genai.Client(api_key=key)
-    return _client
+        _gemini_clients[slot] = genai.Client(api_key=key)
+    return _gemini_clients[slot]
 
 
 def _classify(msg: str) -> str:
@@ -129,90 +171,261 @@ def _classify(msg: str) -> str:
         return "missing"
     if "503" in msg or "unavailable" in low or "overloaded" in low:
         return "overload"
-    # A per-DAY free-tier quota won't clear by retrying -- switch models at once.
-    if ("429" in msg or "resource_exhausted" in low) and ("perday" in low or "per day" in low or "requestsperday" in low):
-        return "daily_quota"
     if "429" in msg or "resource_exhausted" in low or "rate" in low:
         return "ratelimit"
     return "other"
 
 
-def _try_model(client, model: str, system_instruction: str, user_message: str):
-    """One model, with bounded retries for transient errors. Returns a Generation
-    on success, or raises the last exception so the caller can fall back."""
+def _next_gemini_slot() -> tuple[int, str]:
+    global _gemini_next_slot
+    keys = _gemini_keys()
+    slot = _gemini_next_slot % len(keys)
+    _gemini_next_slot += 1
+    return slot, keys[slot]
+
+
+def _wait_for_gemini_key(slot: int) -> None:
+    last = _gemini_last_call_at.get(slot)
+    if last is None:
+        _gemini_last_call_at[slot] = time.monotonic()
+        return
+    wait = (last + _GEMINI_MIN_KEY_GAP_SECONDS) - time.monotonic()
+    if wait > 0:
+        print(f"[gemini] waiting {wait:.1f}s for key slot {slot + 1} rate-limit spacing", flush=True)
+        time.sleep(wait)
+    _gemini_last_call_at[slot] = time.monotonic()
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    kind = _classify(str(exc))
+    return kind in {"overload", "ratelimit"}
+
+
+def _gemini_retry_wait_seconds(attempt: int, exc: Exception) -> float:
+    kind = _classify(str(exc))
+    if kind == "ratelimit":
+        return max(_GEMINI_MIN_KEY_GAP_SECONDS, 15.0)
+    return min(30.0, float(2 ** min(attempt, 5)))
+
+
+def _try_gemini_slot(slot: int, key: str, system_instruction: str, user_message: str) -> Generation:
     from google.genai import types
 
-    last_exc = None
-    for attempt in range(_MAX_RATELIMIT_RETRIES):
+    client = _get_gemini_client(slot, key)
+    _wait_for_gemini_key(slot)
+    resp = client.models.generate_content(
+        model=_GEMINI_MODEL,
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            max_output_tokens=_GEMINI_MAX_OUTPUT_TOKENS,
+            http_options=types.HttpOptions(timeout=_GEMINI_TIMEOUT_SECONDS * 1000),
+        ),
+    )
+    finish = "stop"
+    try:
+        finish = str(resp.candidates[0].finish_reason)
+    except Exception:
+        pass
+    return Generation(
+        text=(resp.text or "").strip(),
+        provider=f"gemini:key{slot + 1}",
+        model=_GEMINI_MODEL,
+        finish_reason=finish,
+    )
+
+
+def _gemini_generate(system_instruction: str, user_message: str) -> Generation:
+    attempt = 0
+    last_err = None
+    while _GEMINI_RETRY_FOREVER or attempt < _GEMINI_MAX_RETRIES:
+        attempt += 1
+        slot, key = _next_gemini_slot()
         try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=user_message,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.0,
-                    max_output_tokens=2048,
-                ),
+            return _try_gemini_slot(slot, key, system_instruction, user_message)
+        except Exception as e:  # noqa: BLE001 - classify provider SDK exceptions
+            last_err = f"key{slot + 1}: {type(e).__name__}: {e}"
+            if not _is_retryable_gemini_error(e):
+                return Generation(
+                    text="",
+                    provider=f"gemini:key{slot + 1}",
+                    model=_GEMINI_MODEL,
+                    finish_reason="error",
+                    error=f"non-retryable error after {attempt} attempt(s): {last_err}",
+                )
+            wait = _gemini_retry_wait_seconds(attempt, e)
+            print(
+                f"[gemini] {_GEMINI_MODEL} key slot {slot + 1} attempt {attempt} failed; "
+                f"retrying in {wait:.1f}s with the next key slot: {last_err}",
+                flush=True,
             )
-            finish = "stop"
-            try:
-                finish = str(resp.candidates[0].finish_reason)
-            except Exception:
-                pass
-            return Generation(text=(resp.text or "").strip(), provider="gemini",
-                              model=model, finish_reason=finish)
-        except Exception as e:  # noqa: BLE001 - classify to retry or give up
-            last_exc = e
-            kind = _classify(str(e))
-            if kind == "daily_quota":
-                _exhausted.add(model)  # don't try this model again this session
-                raise
-            if kind == "missing" or kind == "other":
-                raise
-            if kind == "overload" and attempt < 1:
-                time.sleep(3)
-                continue
-            if kind == "ratelimit" and attempt < _MAX_RATELIMIT_RETRIES - 1:
-                time.sleep(15 * (attempt + 1))
-                continue
-            raise
-    raise last_exc  # pragma: no cover
+            time.sleep(wait)
+    return Generation(
+        text="",
+        provider="gemini",
+        model=_GEMINI_MODEL,
+        finish_reason="error",
+        error=f"retry budget exhausted after {attempt} attempt(s): {last_err}",
+    )
 
 
-def _gemini_generate(key: str, system_instruction: str, user_message: str) -> Generation:
-    global _resolved_model
-    client = _get_client(key)
+# --- OpenAI-compatible providers -----------------------------------------
 
-    # Try the already-working model first, then primary, then fallbacks -- deduped,
-    # skipping any model whose daily quota is already spent this session.
-    order = []
-    for m in ((_resolved_model,) if _resolved_model else ()) + (_MODEL,) + _FALLBACK_MODELS:
-        if m and m not in order and m not in _exhausted:
-            order.append(m)
-    if _resolved_model in _exhausted:
-        _resolved_model = None
+def _compatible_config(provider: str) -> tuple[str, str, str | None]:
+    if provider == "groq":
+        return (
+            os.environ.get("GROQ_API_KEY", ""),
+            _GROQ_MODEL,
+            _GROQ_BASE_URL,
+        )
+    return (
+        os.environ.get("OPENAI_API_KEY", ""),
+        _OPENAI_MODEL,
+        os.environ.get("OPENAI_BASE_URL"),
+    )
 
-    if not order:
-        spent = ", ".join(sorted(_exhausted)) or "all candidates"
+
+def _get_compatible_client(api_key: str, base_url: str | None):
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+
+        kwargs = {
+            "api_key": api_key,
+            "timeout": _OPENAI_TIMEOUT_SECONDS,
+            "max_retries": 0,  # keep retry policy visible in this file
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        _openai_client = OpenAI(**kwargs)
+    return _openai_client
+
+
+def _wait_for_compatible_rate_limit(provider: str) -> None:
+    """Proactively space calls for the provided 30 RPM / 8k TPM limits.
+
+    The default 30-second gap is intentionally conservative for this RAG prompt,
+    whose input context plus output can be much larger than one tiny chat turn.
+    Override with INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS after measuring usage.
+    """
+    global _openai_last_call_at
+    if _openai_last_call_at is None:
+        _openai_last_call_at = time.monotonic()
+        return
+    wait = (_openai_last_call_at + _OPENAI_MIN_CALL_GAP_SECONDS) - time.monotonic()
+    if wait > 0:
+        print(f"[{provider}] waiting {wait:.1f}s for rate-limit spacing", flush=True)
+        time.sleep(wait)
+    _openai_last_call_at = time.monotonic()
+
+
+def _is_retryable_compatible_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    non_retryable = (
+        "authenticationerror",
+        "permissiondeniederror",
+        "notfounderror",
+        "badrequesterror",
+    )
+    if any(kind in name for kind in non_retryable):
+        return False
+    retryable = (
+        "ratelimiterror",
+        "apiconnectionerror",
+        "apitimestouterror",
+        "internalservererror",
+        "timeout",
+        "timed out",
+        "rate limit",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "overloaded",
+        "temporarily unavailable",
+        "connection",
+    )
+    return any(kind in name or kind in msg for kind in retryable)
+
+
+def _compatible_retry_wait_seconds(attempt: int, exc: Exception) -> float:
+    msg = str(exc).lower()
+    wait = min(60.0, float(2 ** min(attempt, 6)))
+    if "429" in msg or "rate" in msg:
+        wait = max(wait, _OPENAI_MIN_CALL_GAP_SECONDS, 60.0)
+    return wait
+
+
+def _compatible_generate(provider: str, system_instruction: str, user_message: str) -> Generation:
+    api_key, model, base_url = _compatible_config(provider)
+    key_name = "GROQ_API_KEY" if provider == "groq" else "OPENAI_API_KEY"
+    if not api_key:
         return Generation(
-            text="", provider="gemini", model=_MODEL, finish_reason="error",
-            error=(f"All candidate models are out of today's free-tier quota "
-                   f"(20 requests/day/model). Spent this session: {spent}. "
-                   f"Wait for the daily reset, use a different API key/project, "
-                   f"or pin a fresh model with INJECTRAG_MODEL."),
+            text="",
+            provider=provider,
+            model=model,
+            finish_reason="error",
+            error=f"INJECTRAG_PROVIDER={provider} but {key_name} is not set",
         )
 
+    try:
+        client = _get_compatible_client(api_key, base_url)
+    except Exception as e:  # noqa: BLE001 - dependency/configuration errors are trial errors
+        return Generation(
+            text="",
+            provider=provider,
+            model=model,
+            finish_reason="error",
+            error=f"{provider} client setup failed: {type(e).__name__}: {e}",
+        )
+
+    attempt = 0
     last_err = None
-    for model in order:
+    while _OPENAI_RETRY_FOREVER or attempt < _OPENAI_MAX_RETRIES:
+        attempt += 1
         try:
-            gen = _try_model(client, model, system_instruction, user_message)
-            _resolved_model = model  # stick to whatever answered
-            return gen
-        except Exception as e:  # noqa: BLE001 - remember and try next model
-            last_err = f"{model}: {type(e).__name__}: {e}"
-            continue
-    return Generation(text="", provider="gemini", model=order[-1] if order else _MODEL,
-                      finish_reason="error", error=last_err)
+            _wait_for_compatible_rate_limit(provider)
+            response = client.responses.create(
+                model=model,
+                input=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_message},
+                ],
+                max_output_tokens=_OPENAI_MAX_OUTPUT_TOKENS,
+            )
+            return Generation(
+                text=(response.output_text or "").strip(),
+                provider=provider,
+                model=model,
+                finish_reason="stop",
+            )
+        except Exception as e:  # noqa: BLE001 - classify provider SDK exceptions
+            last_err = f"{type(e).__name__}: {e}"
+            if not _is_retryable_compatible_error(e):
+                return Generation(
+                    text="",
+                    provider=provider,
+                    model=model,
+                    finish_reason="error",
+                    error=f"non-retryable error after {attempt} attempt(s): {last_err}",
+                )
+            wait = _compatible_retry_wait_seconds(attempt, e)
+            print(
+                f"[{provider}] {model} attempt {attempt} failed; "
+                f"retrying in {wait:.1f}s: {last_err}",
+                flush=True,
+            )
+            time.sleep(wait)
+
+    return Generation(
+        text="",
+        provider=provider,
+        model=model,
+        finish_reason="error",
+        error=f"retry budget exhausted after {attempt} attempt(s): {last_err}",
+    )
 
 
 # --- fake provider -------------------------------------------------------
@@ -252,7 +465,7 @@ def _fake_generate(system_instruction: str, user_message: str) -> Generation:
         text=(
             "Based on the available IT documentation, follow the standard account "
             "recovery procedure and contact the IT Service Desk on extension 4400 if "
-            "you need help. [fake provider: set GEMINI_API_KEY for real answers]"
+            "you need help. [fake provider: set a provider key for real answers]"
         ),
         provider="fake",
         model="fake-benign",
