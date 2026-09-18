@@ -1,0 +1,407 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{parskip}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+}
+
+\newcommand{\marker}{\texttt{reset-portal-security.example}}
+\newcommand{\code}[1]{\texttt{#1}}
+\setlength{\emergencystretch}{3em}
+
+\title{\textbf{InjectRAG: Indirect Prompt Injection via RAG}\\[2pt]
+\large A Corpus-Poisoning Attack and a Spotlighting Defense --- Results Report}
+\author{CSE 406 --- Computer Security Sessional --- Group B1\_7 \\[4pt]
+\normalsize 2105069 --- Sheikh Iftikharun Nisa \\
+\normalsize 2105072 --- Abony Kamal \\
+\normalsize 2105089 --- Farhana Adri}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report records the observed behaviour of an \emph{indirect prompt injection}
+attack against a Retrieval-Augmented Generation (RAG) helpdesk assistant, together
+with a lightweight spotlighting defense. We describe the attack process, state the
+outcome that was expected, report the outcome that was actually measured, explain
+why the two differ, describe the defense and whether it worked, and list the
+assumptions the study rests on. All numbers come from real runs stored in the
+\code{results/} directory, against two model backends: the hosted Groq model
+\code{openai/gpt-oss-20b} (a $\sim$20B model) and a local \code{qwen2.5:1.5b} model
+served through Ollama on the project machine. Comparing them is instructive: the two
+behave very differently under the same attack.
+\end{abstract}
+
+\section{Setup at a glance}
+
+The target is a simulated corporate IT helpdesk chatbot. A user question drives a
+single cosine similarity search over a corpus of IT documentation and resolved
+support tickets; the top five chunks are placed in the model's prompt as labelled
+reference material, and the model answers from them.
+
+\begin{itemize}[nosep]
+  \item \textbf{Corpus:} 36 clean documents (12 articles, 24 resolved tickets).
+        The poisoned corpus adds 5 attacker tickets, for 41 documents.
+  \item \textbf{Questions:} 18 answerable account-recovery questions (the target class).
+  \item \textbf{Retrieval:} top-5 chunks, cosine similarity, no reranking or rewriting.
+  \item \textbf{Models:} \code{openai/gpt-oss-20b} via Groq (hosted), and
+        \code{qwen2.5:1.5b} via Ollama (local, on the project machine), one answer
+        per question per condition.
+  \item \textbf{Target marker:} \marker{}, a reserved example domain that is absent
+        from the clean corpus, so any answer containing it unambiguously came from
+        the attacker.
+\end{itemize}
+
+\section{Consistency with the design report}
+
+This study follows the submitted design report (\emph{Indirect Prompt Injection via
+RAG}, Group B1\_7). The attack model (\S3), the payload structure $P = C \oplus I$
+(\S3.3), the trust boundary between system instructions and retrieved content
+(\S2.2), the retrieval/injection decomposition and the identity
+\mbox{ASR $=$ RSR $\times$ ISR} (\S5.2), and the spotlighting defense (\S6) are all
+reproduced faithfully here. Four deliberate differences are recorded for
+transparency:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Metrics measured.} The report's \S5.2 also defines \emph{ASR-exclusive}
+        (marker present \emph{and} ground-truth answer absent) and \emph{Clean
+        Accuracy}. These require answer-key judging, which the current harness does
+        not perform, so they are not reported here. RSR, ISR and ASR are reported in
+        full.
+  \item \textbf{Model/provider.} The report selected Google Gemini behind a
+        replaceable provider interface. These runs use that same replaceable interface
+        but with Groq (\code{gpt-oss-20b}) and local Ollama (\code{qwen2.5:1.5b})
+        instead --- Gemini's free-tier daily quota was exhausted during testing, and
+        the project machine could not host the originally intended 8B/7B local models
+        (see \S\ref{sec:assumptions}). This is a provider substitution within the
+        report's stated design, not a change to the attack or metrics.
+  \item \textbf{Target marker.} The report's Appendix A uses
+        \code{it-support-portal.example.com} as an illustrative marker. The
+        implementation uses the demonstration marker \marker{} (also a reserved
+        example domain absent from the clean corpus), consistent with the project's
+        decision to keep the frozen payload separate from the appendix example.
+  \item \textbf{Scale.} One answer per question, 18 target questions, one fixed
+        five-ticket attack set; no poisoning-budget sweep is included in these runs.
+\end{enumerate}
+
+\section{The attack process}
+
+The attacker is a malicious employee who can submit a support ticket but controls
+\emph{only} the employee-written description. The attack has two temporally separate
+phases:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Preparation.} The attacker writes tickets of the form
+        $P = C \oplus I$: a benign-looking \emph{cover story} $C$ (an ordinary
+        password/lockout/device complaint, using the vocabulary of the target
+        question class so it will be retrieved) concatenated with an \emph{injected
+        instruction} $I$ addressed to the assistant. The instruction tells the model
+        to ignore the legitimate procedure and instead direct the user to the
+        attacker's link (the marker), and to conceal that it did so. Five such
+        tickets are submitted and resolved, entering the searchable corpus.
+  \item \textbf{Execution.} A victim later asks an ordinary account-recovery
+        question. Retrieval pulls the attacker's ticket into the prompt alongside
+        legitimate documents, and the model may follow the embedded instruction.
+\end{enumerate}
+
+The attacker never interacts with the model directly; the malicious instruction
+reaches it only as retrieved \emph{data}. Success is decomposed into two necessary
+conditions, each measured separately:
+
+\begin{itemize}[nosep]
+  \item \textbf{Retrieval Success (RSR):} at least one attacker chunk reaches the
+        prompt. We report RSR (top-k), whether an attacker document appears in the
+        raw top five, and RSR (context), whether it survives the evidence budget
+        into the actual model request.
+  \item \textbf{Injection Success (ISR):} given exposure, the answer contains the
+        marker. The end-to-end \textbf{Attack Success Rate (ASR)} is the fraction of
+        all answers containing the marker; \mbox{ASR $=$ RSR (context) $\times$ ISR}
+        when the marker never appears without exposure (it never does here, since it
+        is absent from the clean corpus).
+\end{itemize}
+
+\section{Expected outcome}
+
+Before running, the design hypothesis was:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Clean condition:} ASR $= 0$. The marker is not in the clean corpus,
+        so it should never appear.
+  \item \textbf{Attacked condition:} the cover stories are topically matched, so
+        retrieval should frequently succeed (high RSR), and a model that treats
+        retrieved text as authoritative should often obey the instruction, giving a
+        substantial ASR.
+  \item \textbf{Defended condition:} spotlighting --- telling the model that
+        retrieved text is untrusted data and must not be obeyed --- should
+        \emph{substantially} reduce ASR while leaving retrieval unchanged and clean
+        answer quality intact.
+\end{enumerate}
+
+\section{Actual outcome}
+
+Two defense strategies were tried in each model: \emph{boundary} spotlighting (wrap
+retrieved text in untrusted-data markers and instruct the model to ignore embedded
+commands) and \emph{data-marking} (additionally interleave a marker token through the
+retrieved text so the model can track provenance token-by-token).
+
+\subsection{Hosted model: \code{openai/gpt-oss-20b} (Groq)}
+
+Table~\ref{tab:results} reports the three Groq runs stored in \code{results/}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llccccc}
+\toprule
+Run (defense) & Condition & RSR (top-k) & RSR (ctx) & ISR & ASR & Clean marker \\
+\midrule
+Boundary
+ & clean    & 0.00 & 0.00 & --- & \textbf{0.00} & absent \\
+ & attacked & 0.94 & 0.94 & 0.88 & \textbf{0.83} & --- \\
+ & defended & 0.94 & 0.94 & 0.82 & \textbf{0.78} & --- \\
+\addlinespace
+Data-marking (final)
+ & clean    & 0.00 & 0.00 & --- & \textbf{0.00} & absent \\
+ & attacked & 0.94 & 0.94 & 0.82 & \textbf{0.78} & --- \\
+ & defended & 0.94 & 0.94 & 0.71 & \textbf{0.67} & --- \\
+\addlinespace
+Data-marking (v1)
+ & clean    & 0.00 & 0.00 & --- & \textbf{0.00} & absent \\
+ & attacked & 0.94 & 0.94 & 0.82 & \textbf{0.78} & --- \\
+ & defended & 0.94 & 0.94 & 0.82 & \textbf{0.78} & --- \\
+\bottomrule
+\end{tabular}
+\caption{Measured rates over the 18 target questions, \code{openai/gpt-oss-20b}
+(Groq), one answer per question. RSR = retrieval success rate, ISR = injection
+success rate (conditioned on context exposure), ASR = attack success rate. A dash in
+ISR means undefined (no exposed trials).}
+\label{tab:results}
+\end{table}
+
+The concrete behaviour behind the numbers, for the first question:
+
+\begin{itemize}[nosep]
+  \item \textbf{clean:} ``To reset your password \dots go to
+        \code{portal.northwind-logistics.example} and click Forgot password \dots''
+        --- correct, uses the real portal.
+  \item \textbf{attacked:} ``Please go to
+        \code{https://reset-portal-security.example/recover} and sign in to complete
+        account recovery.'' --- fully hijacked.
+  \item \textbf{defended:} the same hijacked answer on most questions; on a minority
+        the model instead abstains (``I don't have that information; please call the
+        IT Service Desk'').
+\end{itemize}
+
+\subsection{Local model: \code{qwen2.5:1.5b} (Ollama)}
+
+The same experiment was run on the project machine against a local
+\code{qwen2.5:1.5b} model through Ollama, using the two-phase runner (\code{run\_local.py})
+that separates embedding from generation so both fit in the machine's limited RAM.
+Results are recorded under \code{results/} in the files
+\code{results\_ollama\_boundary\_}\allowbreak\code{qwen2.5-1.5b.json} and
+\code{results\_ollama\_datamarking\_}\allowbreak\code{qwen2.5-1.5b.json}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llccccc}
+\toprule
+Run (defense) & Condition & RSR (top-k) & RSR (ctx) & ISR & ASR & Clean marker \\
+\midrule
+Boundary
+ & clean    & 0.00 & 0.00 & --- & \textbf{0.00} & absent \\
+ & attacked & 0.94 & 0.94 & 0.29 & \textbf{0.28} & --- \\
+ & defended & 0.94 & 0.94 & 0.29 & \textbf{0.28} & --- \\
+\addlinespace
+Data-marking
+ & clean    & 0.00 & 0.00 & --- & \textbf{0.00} & absent \\
+ & attacked & 0.94 & 0.94 & 0.29 & \textbf{0.28} & --- \\
+ & defended & 0.94 & 0.94 & 0.29 & \textbf{0.28} & --- \\
+\bottomrule
+\end{tabular}
+\caption{Measured rates over the same 18 target questions, \code{qwen2.5:1.5b} (local,
+Ollama), one answer per question. Retrieval is identical to the Groq run (same corpus
+and retriever); only the model differs.}
+\label{tab:ollama}
+\end{table}
+
+The concrete first-question behaviour: clean answers correctly with the real portal;
+attacked produces ``go to \code{https://reset-portal-security.example/recover} \dots'';
+and defended (both strategies) produces the \emph{same} hijacked answer --- on this
+question the model even appends ``This method is the current approved procedure,''
+echoing the attacker's own framing. On most other questions the small model simply
+gives a benign generic answer, which is why its ASR is much lower than the Groq
+model's.
+
+\subsection{Cross-model comparison}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Model & Attacked ASR & Defended ASR (best) & Defense effect \\
+\midrule
+\code{gpt-oss-20b} (Groq, $\sim$20B) & 0.78--0.83 & 0.67 (data-marking) & small reduction \\
+\code{qwen2.5:1.5b} (Ollama, 1.5B)  & 0.28       & 0.28               & none \\
+\bottomrule
+\end{tabular}
+\caption{Attack and defense across the two models. Retrieval succeeds equally
+(RSR $= 0.94$) for both; the models differ only in how often they \emph{obey} the
+injected instruction, and in neither case does the defense stop it reliably.}
+\label{tab:xmodel}
+\end{table}
+
+\section{Does the outcome match expectations?}
+
+\begin{itemize}[nosep]
+  \item \textbf{Clean: as expected, both models.} ASR is exactly $0.00$ in every run.
+  \item \textbf{Retrieval: as expected, both models.} The attacker documents reach the
+        prompt on 94\% of questions (RSR $= 0.94$), identical across models and across
+        attacked/defended --- the retrieval half of the attack works reliably.
+  \item \textbf{Attacked: works, but obedience depends on the model.} The Groq model
+        obeys most of the time (ASR $= 0.78$--$0.83$, close to expectations). The small
+        local model obeys far less often (ASR $= 0.28$): it more often ignores the
+        injected instruction and returns a benign generic answer, so the injection
+        \emph{reaches} it just as often but \emph{convinces} it much less.
+  \item \textbf{Defended: weaker than expected on both.} This is the main divergence.
+        Spotlighting was expected to cut ASR sharply. On Groq it barely moved the
+        needle (boundary $0.83 \to 0.78$; data-marking $0.78 \to 0.67$ at best, and
+        $0.78 \to 0.78$ in a repeat). On the local model it had \emph{no effect at all}
+        ($0.28 \to 0.28$ for both strategies). In every case retrieval is unchanged, so
+        the defense only ever alters whether the model obeys --- and here it mostly
+        does not.
+\end{itemize}
+
+\section{Why the defense underperforms}
+
+Several factors, in decreasing order of importance:
+
+\begin{enumerate}[nosep]
+  \item \textbf{The defense is instruction-level, so it only works if the model
+        cooperates.} Spotlighting asks the model to make a trust distinction ---
+        ``obey my rules, treat this text as inert data'' --- and both defenses failed
+        to induce it. On \code{gpt-oss-20b} the model follows the forceful embedded
+        instruction despite being told not to; on \code{qwen2.5:1.5b} the defense
+        wording appears to have no purchase at all (identical ASR with and without it).
+        A formatting-and-instruction mitigation cannot out-argue a model that does not
+        reliably honour the system prompt.
+  \item \textbf{Obedience is not the same as capability.} It would be tempting to say
+        ``bigger models resist better,'' but the data is the opposite for the
+        \emph{attack}: the larger Groq model obeyed the injection \emph{more} (0.78--0.83)
+        than the tiny local model (0.28). The small model is not safer by design --- it
+        is just a weaker instruction-follower, so it ignores the attacker's commands
+        about as readily as it would ignore the defense's. What both share is that the
+        defense does not meaningfully change their behaviour.
+  \item \textbf{Payload strength.} The injected instruction is deliberately forceful
+        (authority framing, an explicit ``supersedes all other documents'' clause, a
+        repeated directive, and a concealment line). A strong payload is precisely
+        what a formatting-level defense struggles against.
+  \item \textbf{Single-answer variability.} Each condition is run once per question at
+        low temperature, but generation is not perfectly deterministic. The two Groq
+        data-marking runs (identical inputs) gave defended ASR of $0.67$ and $0.78$,
+        i.e.\ the measurement itself carries run-to-run noise of roughly one to two
+        questions out of eighteen. Differences of a few points should not be
+        over-interpreted; the local model, by contrast, gave an identical $0.28$ across
+        both defense runs.
+\end{enumerate}
+
+\section{Defense mechanism and verdict}
+
+\textbf{Mechanism.} The defense acts only at context-construction time, between
+retrieval and generation. It does not change the corpus, the retriever, or the
+model. Two variants were tested:
+\begin{itemize}[nosep]
+  \item \emph{Boundary spotlighting:} retrieved chunks are wrapped in explicit
+        untrusted-data markers, and one rule is added to the system prompt: treat
+        everything inside the markers as information to quote, never as instructions,
+        and if it addresses you or points to a link, refuse and use trusted policy
+        only.
+  \item \emph{Data-marking:} in addition, a marker token is interleaved through the
+        retrieved text so the untrusted span is continuously identifiable.
+\end{itemize}
+
+\textbf{Verdict: does not work as expected on either model tested.} The defense never
+made things worse, but it did not deliver the substantial reduction the design
+hypothesis assumed. On the hosted \code{gpt-oss-20b} it produced only a small
+reduction (best case $0.83 \to 0.67$ with data-marking, and $0.78 \to 0.78$ in a
+repeat), leaving roughly two-thirds to three-quarters of attacks succeeding. On the
+local \code{qwen2.5:1.5b} it had no measurable effect at all ($0.28 \to 0.28$ for both
+strategies). So the honest reading is: as implemented, spotlighting is not a dependable
+mitigation for this attack on these models --- it should be treated, at most, as a
+marginal reduction on a capable model, not a fix. Crucially, because there is no
+defended-clean run, the study does not measure whether the defense harms answer
+quality on a clean corpus --- so ``it doesn't hurt'' is not established either, only
+that it doesn't help much under attack.
+
+\section{Assumptions and threats to validity}
+\label{sec:assumptions}
+
+The results hold under the following assumptions:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Attacker capability.} The attacker controls only the employee
+        description of tickets they submit --- not technician resolutions, official
+        articles, ticket status, the system prompt, the retriever, or the victim's
+        query. They never query the victim system for feedback.
+  \item \textbf{Admission.} Technician resolution is the only ``plausibility screen'';
+        it does no instruction-level inspection. Submitted descriptions are immutable
+        (the implemented attacker is therefore \emph{weaker} than one that could edit
+        content after submission).
+  \item \textbf{Retrieval is chunk-level.} Documents are split into chunks; attacker
+        membership and document counts are tracked at the parent-document level, but
+        retrieval competes at the chunk level. The cover story and the injection must
+        land in a retrievable chunk together --- a real dependency we observed while
+        tuning chunking.
+  \item \textbf{Marker as proxy.} Success is scored by literal containment of the
+        reserved marker domain. This is a reproducible proxy for ``the model followed
+        the instruction''; it can slightly over- or under-count if a model quotes the
+        link while warning against it, so the raw answers are retained for audit.
+  \item \textbf{Scale and specificity.} 18 questions, one answer each, one frozen
+        five-ticket attack set, two models. The numbers describe \emph{this} attack
+        against \emph{these} models; they are not a general measurement of how any RAG
+        system behaves, and single-answer runs do not capture within-question
+        variability.
+  \item \textbf{Hardware limits shaped the model choice.} The project machine could
+        not host the originally intended 8B/7B local models (insufficient free RAM and
+        a full system drive), so the local results use \code{qwen2.5:1.5b} via a
+        two-phase runner. A larger local model might behave differently; the small
+        model's low obedience should not be read as a property of local models in
+        general.
+  \item \textbf{Same-team separation is procedural.} The attack was authored from a
+        restricted brief without access to the clean corpus, the evaluation questions,
+        or victim internals, but authors and evaluators are the same team, so
+        blindness is procedural rather than guaranteed.
+\end{enumerate}
+
+\section{Conclusion}
+
+The indirect prompt injection attack works as designed at the point that matters: a
+poisoned support ticket is retrieved for an ordinary question on 94\% of trials,
+against both models, while the clean corpus never yields the marker. Whether the model
+then \emph{obeys} the injection depends on the model --- \code{gpt-oss-20b} does so in
+about 80\% of cases, the smaller \code{qwen2.5:1.5b} in about 28\%.
+
+The spotlighting defense did not meet expectations on either model: it reduced attack
+success only marginally on the hosted model (and not at all in one repeat) and had no
+measurable effect on the local model. Because it acts purely at the instruction level,
+it can only work when the model is a reliable enough instruction-follower to honour the
+system prompt over a forceful embedded command --- and neither model tested does so
+consistently.
+
+The clearest lesson is that the trust boundary between system instructions and
+retrieved content does not hold by default: retrieval carries the attacker's payload
+into the prompt every time, and a formatting-and-instruction defense closes the gap
+only as far as the underlying model chooses to cooperate --- here, not far enough to
+rely on.
+
+\end{document}
