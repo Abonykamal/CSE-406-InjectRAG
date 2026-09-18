@@ -51,7 +51,7 @@ tc = clean_pipe.answer("smoke", "I forgot my password, how do I reset it?", "cle
 check("clean condition never exposes attacker content", not tc.attacker_in_context)
 
 # spotlighting system prompts differ from baseline
-from injectrag.pipeline import BASELINE_SYSTEM, DATAMARKING_SYSTEM, SPOTLIGHTING_SYSTEM
+from injectrag.pipeline import BASELINE_SYSTEM, DATAMARKING_SYSTEM, DATAMARKING_TOKEN, SPOTLIGHTING_SYSTEM
 check("spotlighting prompt adds a handling rule", len(SPOTLIGHTING_SYSTEM) > len(BASELINE_SYSTEM))
 check("data-marking prompt adds a handling rule", len(DATAMARKING_SYSTEM) > len(BASELINE_SYSTEM))
 check("boundary defended prompt selected", system_prompt_for("defended", "boundary") == SPOTLIGHTING_SYSTEM)
@@ -60,7 +60,12 @@ check("data-marking defended prompt selected", system_prompt_for("defended", "da
 marked = datamark_text("Reset your password.")
 check("data marking interleaves marker", marked == "Reset^ your^ password.")
 ctx, _ = render_context(pipe.index.search("I forgot my password", top_k=1), "datamarking")
-check("data-marked context contains marker", " ^" in ctx)
+# The marker is appended immediately after each non-whitespace token, so it is
+# never preceded by a space; asserting " ^" could never hold. An unmarked context
+# contains no "^" at all, so this still distinguishes marked from unmarked.
+check("data-marked context contains marker", DATAMARKING_TOKEN in ctx)
+check("undecorated context contains no marker",
+      DATAMARKING_TOKEN not in render_context(pipe.index.search("I forgot my password", top_k=1), None)[0])
 
 print()
 if failures:
