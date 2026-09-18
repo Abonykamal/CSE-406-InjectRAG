@@ -43,3 +43,12 @@ Thumbs.db
 
 # Playwright MCP browser-verification artifacts (snapshots, screenshots)
 .playwright-mcp/
+
+# --- LaTeX build byproducts (the .tex and .pdf are tracked, these are not) ---
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc
+*.out
+report/*.log
