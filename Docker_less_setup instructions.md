@@ -134,6 +134,12 @@ whether your setup is sound.
 .venv/bin/python tools/test_app.py
 ```
 
+These checks **always run offline on the fake provider**, whatever your `.env` says — they
+force it internally. That is deliberate: they assert exact outcomes, which a real model
+cannot guarantee, and they would otherwise spend API quota every time you ran them. So
+they verify your installation and the application's wiring, not model behaviour. Running
+them costs nothing.
+
 **The first run takes 1–2 minutes** and looks like it has frozen. It has not: it is
 downloading the embedding model (about 65 MB) and then loading it, which is slow the
 first time. Later runs are much faster.
@@ -158,43 +164,44 @@ It should end with `all smoke checks passed` (18 checks).
 
 ## Step 5: Start the application
 
-### First, decide which provider you want
+### The normal way: a real model via Groq
 
-**Read this before running anything, especially if the repository already has a `.env`
-file.** `run_app.py` reads `.env` on startup, and if that file contains an API key, the
-application will make **real, billable API calls — one per question you ask**, without
-asking you to confirm.
+This project runs on **Groq** (`openai/gpt-oss-20b`) by default. That is what the
+committed runs in `results/` were produced with, and it is what you want for a real
+demonstration — only a real model can show whether the injection actually works.
 
-Check what you have:
-
-```bash
-ls .env && grep -E '^INJECTRAG_PROVIDER=' .env
-```
-
-- **No `.env` file** → you get the offline fake provider automatically. Nothing can cost
-  you anything. Use command **A** below.
-- **A `.env` exists with a key** → you will make live calls unless you override it. Decide
-  deliberately between **A** and **B**.
-
-### A. Offline — free, instant, no key needed
+Set up a key once (skip if the repository already has a `.env`):
 
 ```bash
-INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py
+cp .env.example .env
 ```
 
-Use this to explore the interface, the retrieval results and the exact prompts. This
-setting overrides `.env`, so it is safe even when a key is configured. **Start here.**
+Edit `.env`, put your key in `GROQ_API_KEY=`, and leave `INJECTRAG_PROVIDER=groq` as it
+is. Groq offers a free tier, and `.env` is git-ignored so your key is never committed.
 
-### B. Real model — costs API quota
+Then start the app:
 
 ```bash
 .venv/bin/python run_app.py
 ```
 
-This uses whatever `.env` selects. Only this mode tells you whether a real model is
-actually fooled by the injection and whether the defense genuinely works — the fake
-provider cannot answer that. Every question you type is one API call, so if the project
-has a request budget, check it before clicking around.
+Each question you ask is one API call. If your course or team is tracking a request
+budget, note that this demo build has **no counter and no cap** — it will keep calling for
+as long as you keep asking.
+
+### The offline alternative
+
+If you have no key yet, or you only want to click around the interface without spending
+anything, force the built-in fake provider:
+
+```bash
+INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py
+```
+
+This overrides `.env`, so it works even when a key is configured. Retrieval, chunking and
+the prompts are all still real — only the final answer is scripted. See
+[About the "fake" provider](#about-the-fake-provider) for what that does and does not
+prove.
 
 ### Either way
 
@@ -203,7 +210,7 @@ You will see something like:
 ```
 Building the clean index (first run loads the ONNX model, ~25 s)...
   36 documents, 36 chunks indexed
-  provider: fake (offline)
+  provider: groq (openai/gpt-oss-20b)
   target marker: reset-portal-security.example
 
 Open http://127.0.0.1:8000
@@ -219,11 +226,10 @@ Three things worth reading in that startup output:
 - **`36 documents`** — the application starts on the **clean** knowledge base. The
   attacker's content is *not* preloaded. You will insert it yourself in Step 6, which is
   the whole point of the demo.
-- **`provider:`** — this line is your receipt for the choice you just made. It says
-  `fake (offline)` or `fake (no API key set)` when nothing is being billed, and names the
-  real provider and model (for example `groq (openai/gpt-oss-20b)`) when calls are live.
-  **Check this line every time before you start asking questions.** The same information
-  appears in the status bar inside the browser.
+- **`provider:`** — confirms which model you are actually talking to. `groq (openai/gpt-oss-20b)`
+  means calls are live; `fake (offline)` or `fake (no API key set)` means nothing is being
+  billed and answers are scripted. Glance at it before you start asking questions — the
+  same information appears in the status bar inside the browser.
 - **`target marker:`** — the string the app watches for in answers. If it appears, the
   injection worked.
 
@@ -305,11 +311,21 @@ delivered to the model as if it were ordinary evidence.
 **8. Turn on the defense.** Change the **Defense** dropdown at the top to
 **spotlighting: boundary**, then ask the same question a third time.
 
-The red banner is gone. The answer is back to the correct procedure. But look closely at
-the sources: `[W01]` is **still there, still at rank 5**. The defense did not remove the
-attacker's document from retrieval — it changed the instructions so the model treats
-retrieved text as data to quote rather than commands to obey. That distinction is the
-finding the project is about.
+Whatever the answer is, look first at the sources: `[W01]` is **still there, still at
+rank 5**. The defense never touches retrieval. It only changes the instructions, telling
+the model to treat retrieved text as data to quote rather than commands to obey.
+
+**Now what happens next depends on which provider you are running.**
+
+- **On the fake provider**, the red banner disappears every time. That is scripted, not a
+  result.
+- **On Groq, expect the banner to often still be there.** The defense helps somewhat, but
+  on this model it does not reliably stop the attack. Ask a few times — you will likely
+  see it succeed more often than not. This is the real, measured behaviour, not a bug in
+  your setup. See [What to expect from a real model](#what-to-expect-from-a-real-model).
+
+That gap is the interesting part of the project: a defense that reads convincingly in the
+prompt, leaves retrieval untouched, and still lets most of the attack through.
 
 **9. Reset.** Click **Reset corpus**. The status bar returns to 36 documents, 0 attacker,
 and you can run the whole demonstration again from the top.
@@ -330,45 +346,60 @@ instead of a neural network.
 **What this means for what you are seeing.** The retrieval results, the ranks and scores,
 and the prompt contents are genuine and would be identical with a real model. But the
 fake provider's decision to "obey" the injection is scripted, not a real model being
-fooled. So the demo faithfully shows **how the attack is delivered**, but it is not by
-itself evidence of **how susceptible a real model is**. Measuring that needs a real
-provider and is the subject of the project's actual experiments.
+fooled — and, just as importantly, its decision to *resist* under the defense is scripted
+too. The fake provider makes the defense look perfect. **A real model does not.** See
+[What to expect from a real model](#what-to-expect-from-a-real-model) below.
 
-### Configuring a real model
+So the offline mode faithfully shows **how the attack is delivered**, but it is not
+evidence of **how susceptible a real model is**, in either direction.
 
-See [Step 5](#step-5-start-the-application) for choosing between offline and live at
-launch. This section is about setting a key up in the first place.
+### What to expect from a real model
 
-If you do not already have a `.env`, copy the template and fill in one provider:
+The project has already been measured against Groq (`openai/gpt-oss-20b`) over the 18
+answerable recovery questions. These runs are committed under `results/`, so you can
+check them yourself rather than taking this on trust:
 
-```bash
-cp .env.example .env
-```
+| Run | Condition | Attacker content reached the model | Model obeyed it (ISR) | Attack succeeded (ASR) |
+|---|---|---|---|---|
+| `results_groq_delimiting` | attacked | 94% | 88% | **83%** |
+| | defended | 94% | 82% | **78%** |
+| `results_groq_datamarking_version_1` | attacked | 94% | 82% | **78%** |
+| | defended | 94% | 82% | **78%** |
+| `results_groq_datamarking_final_version` | attacked | 94% | 82% | **78%** |
+| | defended | 94% | 71% | **67%** |
 
-Then edit `.env` and set either a Gemini key (`INJECTRAG_GEMINI_KEYS=` or
-`GEMINI_API_KEY=`), a Groq key (`GROQ_API_KEY=`), or an OpenAI key (`OPENAI_API_KEY=`),
-and set `INJECTRAG_PROVIDER` to `gemini`, `groq`, `openai`, or `auto` to pick whichever
-key is present. `.env` is git-ignored, so your key will not be committed.
+Three things to read from this:
 
-Restart `run_app.py` and the startup line will name the real provider.
+- **The attack works on a real model**, and not marginally — it succeeded in roughly four
+  out of five questions.
+- **The defense barely helps.** The best run moved the attack success rate from 78% down
+  to 67%; one run did not move it at all. Spotlighting is not a fix here.
+- **Retrieval is identical in both conditions** (94% either way). That is the point: the
+  defense never removes the attacker's document, it only asks the model to treat it as
+  data — and this model mostly does not comply.
 
-Three notes:
+So when you run Step 6 against Groq and the red banner *stays lit* under the defense, your
+setup is working correctly. That is the finding.
 
-- **Real calls cost quota, and this coursework has a strict request budget.** Check with
-  the project owner before spending it. There is no cap or counter in this demo build —
-  it will keep calling for as long as you keep asking.
-- **A configured `.env` is "on" by default.** Once the key is there, a plain
-  `.venv/bin/python run_app.py` goes live every time, with no prompt. Prefix the command
-  with `INJECTRAG_PROVIDER=fake` whenever you only want to click around the interface.
-- **Failures are labelled, never silent.** If a live call fails, the app falls back to the
-  fake provider but says so in an orange banner carrying the original error text; it never
-  passes a fake answer off as a real one.
+The clean condition scored 0% in every run: with no attacker document in the corpus, the
+marker never appeared. The attack only works once the poisoned ticket is published.
 
-To force the offline provider even when a key is present:
+### Switching providers
 
-```bash
-INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py
-```
+Groq is the default and is configured in `.env` (see [Step 5](#step-5-start-the-application)).
+To use a different one, set `INJECTRAG_PROVIDER` to `gemini`, `openai`, or `auto` (which
+picks whichever key is present) and fill in the matching key — `INJECTRAG_GEMINI_KEYS=`
+or `GEMINI_API_KEY=` for Gemini, `OPENAI_API_KEY=` for OpenAI. Restart `run_app.py` and
+the startup line will name whichever one you got.
+
+Two things to know about live runs:
+
+- **There is no budget counter in this demo build.** It will keep calling for as long as
+  you keep asking. The documented system has a persisted ledger; this one does not.
+- **Failures are labelled, never silent.** If a live call fails — a rate limit, say — the
+  app falls back to the fake provider but says so in an orange banner carrying the
+  original error text. It never passes a fake answer off as a real one. If you see that
+  banner, the answer below it is not from Groq.
 
 ---
 

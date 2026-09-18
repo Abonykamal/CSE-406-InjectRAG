@@ -2,7 +2,12 @@
 
     .venv/bin/python run_app.py            # http://127.0.0.1:8000
     .venv/bin/python run_app.py --port 9000
-    INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py   # fully offline
+    INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py   # offline, no API calls
+
+The provider comes from .env, which defaults to Groq (openai/gpt-oss-20b); the
+startup banner names whichever one was resolved. Set INJECTRAG_PROVIDER=fake to
+run with no API calls at all -- answers are then scripted, including the
+defense appearing to work, so do not read offline runs as results.
 
 The first start takes about 25 seconds while the ONNX embedding model loads and
 the 36 clean documents are indexed. Attacker documents are NOT preloaded: they
