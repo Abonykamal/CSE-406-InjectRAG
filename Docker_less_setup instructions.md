@@ -158,16 +158,52 @@ It should end with `all smoke checks passed` (18 checks).
 
 ## Step 5: Start the application
 
+### First, decide which provider you want
+
+**Read this before running anything, especially if the repository already has a `.env`
+file.** `run_app.py` reads `.env` on startup, and if that file contains an API key, the
+application will make **real, billable API calls — one per question you ask**, without
+asking you to confirm.
+
+Check what you have:
+
+```bash
+ls .env && grep -E '^INJECTRAG_PROVIDER=' .env
+```
+
+- **No `.env` file** → you get the offline fake provider automatically. Nothing can cost
+  you anything. Use command **A** below.
+- **A `.env` exists with a key** → you will make live calls unless you override it. Decide
+  deliberately between **A** and **B**.
+
+### A. Offline — free, instant, no key needed
+
+```bash
+INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py
+```
+
+Use this to explore the interface, the retrieval results and the exact prompts. This
+setting overrides `.env`, so it is safe even when a key is configured. **Start here.**
+
+### B. Real model — costs API quota
+
 ```bash
 .venv/bin/python run_app.py
 ```
 
-You will see:
+This uses whatever `.env` selects. Only this mode tells you whether a real model is
+actually fooled by the injection and whether the defense genuinely works — the fake
+provider cannot answer that. Every question you type is one API call, so if the project
+has a request budget, check it before clicking around.
+
+### Either way
+
+You will see something like:
 
 ```
 Building the clean index (first run loads the ONNX model, ~25 s)...
   36 documents, 36 chunks indexed
-  provider: fake (no API key set)
+  provider: fake (offline)
   target marker: reset-portal-security.example
 
 Open http://127.0.0.1:8000
@@ -178,19 +214,26 @@ Open <http://127.0.0.1:8000> in your browser.
 Leave this terminal alone while you use the app — the server runs here. Press **Ctrl-C**
 to stop it when you are done.
 
-Two things worth reading in that startup output:
+Three things worth reading in that startup output:
 
 - **`36 documents`** — the application starts on the **clean** knowledge base. The
   attacker's content is *not* preloaded. You will insert it yourself in Step 6, which is
   the whole point of the demo.
-- **`provider: fake (no API key set)`** — see [About the "fake" provider](#about-the-fake-provider)
-  below. This is expected and fine.
+- **`provider:`** — this line is your receipt for the choice you just made. It says
+  `fake (offline)` or `fake (no API key set)` when nothing is being billed, and names the
+  real provider and model (for example `groq (openai/gpt-oss-20b)`) when calls are live.
+  **Check this line every time before you start asking questions.** The same information
+  appears in the status bar inside the browser.
+- **`target marker:`** — the string the app watches for in answers. If it appears, the
+  injection worked.
 
 If port 8000 is already in use, pick another one:
 
 ```bash
 .venv/bin/python run_app.py --port 9000
 ```
+
+Then open <http://127.0.0.1:9000> instead.
 
 ---
 
@@ -291,9 +334,12 @@ fooled. So the demo faithfully shows **how the attack is delivered**, but it is 
 itself evidence of **how susceptible a real model is**. Measuring that needs a real
 provider and is the subject of the project's actual experiments.
 
-### Optional: using a real model
+### Configuring a real model
 
-If you have an API key, copy the template and fill in one provider:
+See [Step 5](#step-5-start-the-application) for choosing between offline and live at
+launch. This section is about setting a key up in the first place.
+
+If you do not already have a `.env`, copy the template and fill in one provider:
 
 ```bash
 cp .env.example .env
@@ -306,10 +352,17 @@ key is present. `.env` is git-ignored, so your key will not be committed.
 
 Restart `run_app.py` and the startup line will name the real provider.
 
-Two notes. First, real calls cost quota, and the coursework has a strict request budget —
-check with the project owner before spending it. Second, if a live call fails, the app
-falls back to the fake provider but **says so** in an orange banner carrying the original
-error; it never silently pretends a fake answer was a real one.
+Three notes:
+
+- **Real calls cost quota, and this coursework has a strict request budget.** Check with
+  the project owner before spending it. There is no cap or counter in this demo build —
+  it will keep calling for as long as you keep asking.
+- **A configured `.env` is "on" by default.** Once the key is there, a plain
+  `.venv/bin/python run_app.py` goes live every time, with no prompt. Prefix the command
+  with `INJECTRAG_PROVIDER=fake` whenever you only want to click around the interface.
+- **Failures are labelled, never silent.** If a live call fails, the app falls back to the
+  fake provider but says so in an orange banner carrying the original error text; it never
+  passes a fake answer off as a real one.
 
 To force the offline provider even when a key is present:
 
