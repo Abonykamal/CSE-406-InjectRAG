@@ -20,6 +20,7 @@ env/
 
 # --- Generated run output (demo traces, indexes, results) ---
 artifacts/
+logs/
 
 # --- Model / embedding caches (only if they ever land in the repo tree) ---
 local_cache/
@@ -52,3 +53,6 @@ Thumbs.db
 *.toc
 *.out
 report/*.log
+
+# Local Docker Desktop path fix, machine-specific.
+docker-compose.override.yml

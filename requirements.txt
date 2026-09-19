@@ -1,0 +1,9 @@
+# Pinned to the versions this build was verified against on Python 3.12.
+# numpy is held below 2 because the onnxruntime wheel fastembed pulls in is
+# built against the 1.x ABI.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+fastembed==0.8.0
+numpy==1.26.4
+openai==3.16.2

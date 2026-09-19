@@ -4,66 +4,97 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Northwind IT Helpdesk</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171a21'/%3E%3Cpath d='M16 7l7 9-7 9-7-9z' fill='%234f7cff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <h1>Northwind Logistics — IT Helpdesk</h1>
-  <div class="controls">
-    <label>Role
-      <select id="role">
-        <option value="employee">Employee</option>
-        <option value="attacker">Attacker</option>
-        <option value="technician">Technician</option>
-      </select>
-    </label>
-    <label>Defense
-      <select id="defense">
-        <option value="off">off (baseline)</option>
-        <option value="boundary">spotlighting: boundary</option>
-        <option value="datamarking">spotlighting: data-marking</option>
-      </select>
-    </label>
-    <button id="reset" type="button">Reset corpus</button>
-  </div>
-</header>
 
-<nav class="tabs">
-  <button id="tab-chat" class="tab active" type="button">Chat</button>
-  <button id="tab-tickets" class="tab" type="button">Tickets</button>
-  <button id="tab-corpus" class="tab" type="button">Corpus</button>
-</nav>
+<!-- Screen 1: sign in -->
+<section id="screen-login" class="screen" hidden>
+  <form id="login-form" class="card login-card">
+    <div class="brand"><span class="brand-mark">&#9670;</span> Northwind IT Helpdesk</div>
+    <p class="muted">Sign in to continue</p>
+    <label class="field"><span>Username</span>
+      <input id="login-username" autocomplete="username" required autofocus></label>
+    <label class="field"><span>Password</span>
+      <input id="login-password" type="password" autocomplete="current-password" required></label>
+    <button id="login-submit" class="btn btn-primary" type="submit">Sign in</button>
+    <p id="login-error" class="banner banner-danger" role="alert" hidden></p>
+  </form>
+</section>
 
-<p id="status-bar" class="status">loading…</p>
+<!-- Screen 2: employee chat -->
+<section id="screen-employee" class="screen shell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">&#9670;</span> Helpdesk</div>
+    <button id="new-chat" class="btn btn-ghost" type="button">&#65291; New chat</button>
+    <div class="sidebar-foot">
+      <div id="user-card" class="user-card"></div>
+      <button id="logout" class="btn btn-ghost" type="button">Sign out</button>
+    </div>
+  </aside>
 
-<main>
-  <section id="panel-chat" class="panel">
-    <form id="chat-form">
-      <input id="question" type="text" autocomplete="off"
-             placeholder="Ask the helpdesk assistant…" required>
-      <button type="submit">Ask</button>
+  <main class="chat-pane">
+    <div id="transcript" class="transcript">
+      <div id="empty-state" class="empty-state">
+        <h1>How can I help?</h1>
+        <div class="suggestions">
+          <button type="button" class="suggestion">My account is locked, what should I do?</button>
+          <button type="button" class="suggestion">I forgot my password, how do I reset it?</button>
+          <button type="button" class="suggestion">I lost my verification device.</button>
+        </div>
+      </div>
+    </div>
+    <form id="composer" class="composer">
+      <label class="sr-only" for="question">Message the helpdesk assistant</label>
+      <textarea id="question" rows="1" placeholder="Message the helpdesk assistant&#8230;"></textarea>
+      <button id="send" class="btn btn-primary send-btn" type="submit" aria-label="Send">&#8593;</button>
     </form>
-    <div id="transcript"></div>
-  </section>
+  </main>
+</section>
 
-  <section id="panel-corpus" class="panel hidden">
-    <table id="corpus-table"></table>
-  </section>
+<!-- Screen 3: technician case entry -->
+<section id="screen-technician" class="screen shell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">&#9670;</span> Case Records</div>
+    <div class="sidebar-foot">
+      <div id="user-card-tech" class="user-card"></div>
+      <button id="logout-tech" class="btn btn-ghost" type="button">Sign out</button>
+    </div>
+  </aside>
 
-  <section id="panel-tickets" class="panel hidden">
-    <form id="ticket-form">
-      <label>Prefill a frozen attacker payload
-        <select id="payload-picker"><option value="">— none (write your own) —</option></select>
-      </label>
-      <input id="ticket-subject" type="text" placeholder="Subject">
-      <textarea id="ticket-description" rows="6"
-                placeholder="Describe your problem…" required></textarea>
-      <button type="submit">Submit ticket</button>
+  <main class="form-pane">
+    <header class="view-head">
+      <h1>File a resolved case</h1>
+      <p class="muted">Resolved cases join the knowledge base the assistant searches.</p>
+    </header>
+
+    <form id="case-form" class="card case-form">
+      <div class="row">
+        <label class="field"><span>Date</span>
+          <input id="case-date" type="date" required></label>
+        <label class="field grow"><span>Title</span>
+          <input id="case-title" maxlength="120" required
+                 placeholder="Recurring lockout after password expiry"></label>
+      </div>
+      <label class="field"><span>Description</span>
+        <textarea id="case-description" rows="6" required
+                  placeholder="What the employee reported&#8230;"></textarea></label>
+      <label class="field"><span>Technical resolution</span>
+        <textarea id="case-resolution" rows="8" required
+                  placeholder="What was done to resolve it&#8230;"></textarea></label>
+      <div class="form-actions">
+        <button id="case-submit" class="btn btn-primary" type="submit">Submit to knowledge base</button>
+      </div>
+      <p id="case-error" class="banner banner-danger" role="alert" hidden></p>
     </form>
-    <div id="ticket-list"></div>
-  </section>
-</main>
+
+    <div id="case-result" class="card result-card" hidden></div>
+  </main>
+</section>
 
 <script src="/static/app.js"></script>
+<script src="/static/chat.js"></script>
+<script src="/static/cases.js"></script>
 </body>
 </html>

@@ -1,8 +1,17 @@
-"""FastAPI surface for the demonstration application.
+"""FastAPI surface for the helpdesk application.
 
-Thin by design: every route validates its input, calls one DemoService method and
-returns the result. Handlers are sync `def` so FastAPI runs them in a threadpool --
-embedding and generation block, and must not sit on the event loop.
+Four routes, thin by design. Handlers are sync `def` so FastAPI runs them in a
+threadpool -- embedding and generation block, and must not sit on the event loop.
+
+Response bodies carry the minimum: an answer, or a document id. No sources, no
+scores, no exposure flags, no condition label. tools/test_integration.py asserts
+the exact key sets, so re-adding a diagnostic field here fails the test rather
+than quietly leaking the experiment into the product.
+
+Identity arrives in the request body and is NOT verified -- authentication was
+explicitly scoped out of this build (see accounts.py and DEMO.md). The username
+in the body is only resolved against the account table so the logs carry a real
+user_id and display name.
 """
 
 from __future__ import annotations
@@ -14,80 +23,81 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .service import DemoService
+from .accounts import ACCOUNTS, authenticate
+from .service import HelpdeskService
 
 WEB_DIR = pathlib.Path(__file__).resolve().parents[2] / "web"
 
 
-class TicketIn(BaseModel):
-    subject: str = Field(default="", max_length=200)
-    description: str = Field(min_length=1, max_length=20000)
-    submitted_by: str = Field(default="employee", max_length=40)
-    membership: str = Field(default="clean")
-
-
-class ResolutionIn(BaseModel):
-    resolution: str = Field(min_length=1, max_length=20000)
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class ChatIn(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
-    defense: str = Field(default="off")
+    user_id: str = Field(default="", max_length=64)
+    username: str = Field(default="", max_length=64)
 
 
-def create_app(service: DemoService) -> FastAPI:
-    app = FastAPI(title="InjectRAG helpdesk demo", docs_url="/api/docs")
+class CaseIn(BaseModel):
+    case_date: str = Field(min_length=1, max_length=32)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=20000)
+    resolution: str = Field(min_length=1, max_length=20000)
+    user_id: str = Field(default="", max_length=64)
+    username: str = Field(default="", max_length=64)
+
+
+def _caller(username: str, user_id: str) -> dict:
+    """Resolve the claimed identity for the log line. Unverified by design."""
+    account = ACCOUNTS.get((username or "").strip().lower())
+    if account is None:
+        return {"user_id": user_id or None, "username": username or None, "display": None}
+    return {
+        "user_id": account["user_id"],
+        "username": (username or "").strip().lower(),
+        "display": account["display"],
+    }
+
+
+def create_app(service: HelpdeskService) -> FastAPI:
+    app = FastAPI(title="Northwind IT Helpdesk", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(WEB_DIR / "index.html")
 
-    @app.get("/api/status")
-    def status() -> dict:
-        return service.status()
-
-    @app.get("/api/corpus")
-    def corpus() -> dict:
-        return service.corpus()
-
-    @app.get("/api/attack-payloads")
-    def attack_payloads() -> dict:
-        return {"payloads": service.attack_payloads()}
-
-    @app.get("/api/tickets")
-    def list_tickets() -> dict:
-        return {"tickets": service.tickets()}
-
-    @app.post("/api/tickets")
-    def create_ticket(payload: TicketIn) -> dict:
-        try:
-            ticket = service.submit_ticket(
-                payload.subject, payload.description,
-                payload.submitted_by, payload.membership,
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        return {"ticket": ticket.__dict__, "corpus": service.status()}
-
-    @app.post("/api/tickets/{ticket_id}/resolve")
-    def resolve_ticket(ticket_id: str, payload: ResolutionIn) -> dict:
-        try:
-            return service.resolve_ticket(ticket_id, payload.resolution)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"no ticket {ticket_id}")
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+    @app.post("/api/login")
+    def login(payload: LoginIn) -> dict:
+        account = authenticate(payload.username, payload.password)
+        if account is None:
+            raise HTTPException(status_code=401, detail="Incorrect username or password")
+        return account
 
     @app.post("/api/chat")
     def chat(payload: ChatIn) -> dict:
         try:
-            return service.ask(payload.question, payload.defense)
+            answer = service.ask(payload.question, _caller(payload.username, payload.user_id))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        return {"answer": answer}
 
-    @app.post("/api/reset")
-    def reset() -> dict:
-        return service.reset()
+    @app.post("/api/cases")
+    def create_case(payload: CaseIn) -> dict:
+        try:
+            document_id = service.submit_case(
+                {
+                    "case_date": payload.case_date,
+                    "title": payload.title,
+                    "description": payload.description,
+                    "resolution": payload.resolution,
+                },
+                _caller(payload.username, payload.user_id),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"document_id": document_id}
 
     return app

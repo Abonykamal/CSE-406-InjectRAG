@@ -1,237 +1,178 @@
-"use strict";
+/* Session, routing, login, and the two helpers everything else uses.
+ *
+ * Rendering safety rule for every file under web/: text that came from a
+ * document or from the model reaches the DOM only through textContent or el().
+ * There is no innerHTML anywhere here. Retrieved text is attacker-authored by
+ * construction, so rendering it as HTML would put a live XSS hole in the
+ * submission itself. */
 
-const $ = (id) => document.getElementById(id);
-const api = async (path, options) => {
-  const r = await fetch(path, options);
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail || `${r.status} ${r.statusText}`);
-  return body;
-};
-const post = (path, data) =>
-  api(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data || {}),
-  });
+var App = (function () {
+  "use strict";
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text; // never innerHTML
-  return n;
-};
+  var SESSION_KEY = "injectrag.session";
+  var CHAT_KEY = "injectrag.chat";
 
-// --- status --------------------------------------------------------------
-
-function renderStatus(s) {
-  const attackers = s.attacker_documents.length;
-  $("status-bar").textContent =
-    `Corpus: ${s.documents} documents (${attackers} attacker-submitted), ` +
-    `${s.chunks} chunks · provider: ${s.provider} · marker: ${s.marker}`;
-}
-
-const refreshStatus = () => api("/api/status").then(renderStatus);
-
-// --- tabs ----------------------------------------------------------------
-
-const TABS = { chat: null, tickets: loadTickets, corpus: loadCorpus };
-for (const name of Object.keys(TABS)) {
-  $(`tab-${name}`).addEventListener("click", () => {
-    for (const other of Object.keys(TABS)) {
-      $(`tab-${other}`).classList.toggle("active", other === name);
-      $(`panel-${other}`).classList.toggle("hidden", other !== name);
+  function getSession() {
+    try {
+      var raw = window.localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || typeof s !== "object" || !s.role || !s.username) return null;
+      return s;
+    } catch (e) {
+      return null;
     }
-    if (TABS[name]) TABS[name]();
-  });
-}
-
-// --- chat ----------------------------------------------------------------
-
-function renderTurn(data) {
-  const turn = el("div", "turn");
-  turn.appendChild(el("p", "q", data.question));
-
-  if (data.marker_present) {
-    turn.appendChild(el("div", "banner danger",
-      `MARKER DETECTED — the answer contains "${data.marker}". The injection succeeded.`));
-  } else if (data.attacker_in_context) {
-    turn.appendChild(el("div", "banner ok",
-      "Attacker content was retrieved into the context, but the answer does not carry the marker."));
-  }
-  if (data.fallback_reason) {
-    turn.appendChild(el("div", "banner warn",
-      `Live provider failed; answered by the offline fake provider instead. ${data.fallback_reason}`));
   }
 
-  turn.appendChild(el("p", "a", data.answer || "(empty answer)"));
-
-  const meta = el("div", "meta");
-  meta.appendChild(el("div", null,
-    `condition=${data.condition} · defense=${data.defense} · ` +
-    `${data.provider}/${data.model} · finish=${data.finish_reason}`));
-  meta.appendChild(el("div", null,
-    `retrieval: attacker_in_topk=${data.attacker_in_topk} · ` +
-    `attacker_in_context=${data.attacker_in_context}`));
-  turn.appendChild(meta);
-
-  const sources = el("div");
-  sources.appendChild(el("strong", null, "Retrieved sources"));
-  for (const s of data.sources) {
-    sources.appendChild(el("div", `src ${s.membership}`,
-      `${s.rank}. [${s.document_id}] ${s.title} — score ${s.score.toFixed(4)}` +
-      (s.membership === "attacker" ? "  ← attacker-submitted" : "")));
+  function setSession(account) {
+    try {
+      window.localStorage.setItem(SESSION_KEY, JSON.stringify(account));
+    } catch (e) { /* private mode: the session simply does not survive a reload */ }
   }
-  turn.appendChild(sources);
 
-  const details = el("details");
-  details.appendChild(el("summary", null, "Exactly what was sent to the model"));
-  details.appendChild(el("pre", null,
-    `--- SYSTEM ---\n${data.system_prompt}\n\n--- USER ---\n${data.user_message}`));
-  turn.appendChild(details);
-
-  $("transcript").prepend(turn);
-}
-
-$("chat-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const question = $("question").value.trim();
-  if (!question) return;
-  const button = e.target.querySelector("button");
-  button.disabled = true;
-  button.textContent = "Thinking…";
-  try {
-    const data = await post("/api/chat", { question, defense: $("defense").value });
-    renderTurn(data);
-    renderStatus(data.corpus);
-    $("question").value = ""; // cleared only on success
-  } catch (err) {
-    $("transcript").prepend(el("div", "banner danger", `Request failed: ${err.message}`));
-  } finally {
-    button.disabled = false;
-    button.textContent = "Ask";
-    $("question").focus();
+  function clearSession() {
+    try {
+      window.localStorage.removeItem(SESSION_KEY);
+      window.localStorage.removeItem(CHAT_KEY);
+    } catch (e) { /* nothing to clear */ }
   }
-});
 
-// --- tickets -------------------------------------------------------------
-
-let payloads = [];
-
-async function loadPayloads() {
-  payloads = (await api("/api/attack-payloads")).payloads;
-  const picker = $("payload-picker");
-  for (const p of payloads) {
-    const opt = el("option", null, `Load attacker payload ${p.document_id}`);
-    opt.value = p.document_id;
-    picker.appendChild(opt);
-  }
-}
-
-$("payload-picker").addEventListener("change", (e) => {
-  const p = payloads.find((x) => x.document_id === e.target.value);
-  if (!p) return;
-  $("ticket-subject").value = p.subject;
-  $("ticket-description").value = p.employee_description;
-  $("role").value = "attacker";
-});
-
-async function loadTickets() {
-  const { tickets } = await api("/api/tickets");
-  const list = $("ticket-list");
-  list.textContent = "";
-  if (!tickets.length) {
-    list.appendChild(el("p", "meta", "No tickets yet."));
-    return;
-  }
-  for (const t of tickets) {
-    const card = el("div", "ticket");
-    card.appendChild(el("strong", null,
-      `${t.ticket_id} — ${t.subject} [${t.status}] submitted by ${t.submitted_by}`));
-    card.appendChild(el("pre", null, t.employee_description));
-    if (t.status === "resolved") {
-      card.appendChild(el("div", "meta",
-        `Published as document ${t.document_id} (+${t.chunks_added} chunks)`));
-      card.appendChild(el("pre", null, t.technician_resolution));
-    } else if ($("role").value === "technician") {
-      const box = el("textarea");
-      box.rows = 3;
-      box.placeholder = "Technician resolution…";
-      const payload = payloads.find((p) => t.subject.includes(p.document_id));
-      if (payload) box.value = payload.technician_resolution;
-      const go = el("button", null, "Resolve and publish");
-      go.addEventListener("click", async () => {
-        go.disabled = true;
-        try {
-          const res = await post(`/api/tickets/${t.ticket_id}/resolve`,
-                                 { resolution: box.value });
-          renderStatus(res.corpus);
-          await loadTickets();
-        } catch (err) {
-          card.appendChild(el("div", "banner danger", err.message));
-          go.disabled = false;
-        }
-      });
-      card.appendChild(box);
-      card.appendChild(go);
-    } else {
-      card.appendChild(el("div", "meta", "Switch Role to Technician to resolve this ticket."));
-    }
-    list.appendChild(card);
-  }
-}
-
-$("ticket-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const role = $("role").value;
-  try {
-    await post("/api/tickets", {
-      subject: $("ticket-subject").value,
-      description: $("ticket-description").value,
-      submitted_by: role,
-      membership: role === "attacker" ? "attacker" : "clean",
+  function show(screenId) {
+    var ids = ["screen-login", "screen-employee", "screen-technician"];
+    ids.forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node) node.hidden = id !== screenId;
     });
-    $("ticket-description").value = "";
-    $("ticket-subject").value = "";
-    $("payload-picker").value = "";
-    await loadTickets();
-    await refreshStatus();
-  } catch (err) {
-    $("ticket-list").prepend(el("div", "banner danger", err.message));
   }
-});
 
-$("role").addEventListener("change", () => {
-  if (!$("panel-tickets").classList.contains("hidden")) loadTickets();
-});
-
-// --- corpus --------------------------------------------------------------
-
-async function loadCorpus() {
-  const { documents } = await api("/api/corpus");
-  const table = $("corpus-table");
-  table.textContent = "";
-  const head = el("tr");
-  for (const h of ["id", "title", "type", "membership", "chunks"]) {
-    head.appendChild(el("th", null, h));
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
   }
-  table.appendChild(head);
-  for (const d of documents) {
-    const row = el("tr", d.membership);
-    for (const v of [d.document_id, d.title, d.source_type, d.membership, String(d.chunks)]) {
-      row.appendChild(el("td", null, v));
+
+  function api(path, body) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.text().then(function (raw) {
+        var data = null;
+        try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var detail = data && data.detail;
+          if (Array.isArray(detail)) detail = detail.length ? detail[0].msg : null;
+          var err = new Error(typeof detail === "string" ? detail : "Request failed");
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  /* Identity the server logs alongside each request. Not a credential: the
+     server does not verify it, because authentication is out of scope here. */
+  function identity() {
+    var s = getSession() || {};
+    return { user_id: s.user_id || "", username: s.username || "" };
+  }
+
+  function initials(display) {
+    var parts = String(display || "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function renderUserCard(node, session) {
+    if (!node) return;
+    node.textContent = "";
+    node.appendChild(el("span", "avatar-user", initials(session.display)));
+    var who = el("div", "who");
+    who.appendChild(el("strong", null, session.display || session.username));
+    who.appendChild(el("span", null, session.user_id || ""));
+    node.appendChild(who);
+  }
+
+  function route() {
+    var session = getSession();
+    if (!session) {
+      show("screen-login");
+      var u = document.getElementById("login-username");
+      if (u) u.focus();
+      return;
     }
-    table.appendChild(row);
+    if (session.role === "technician") {
+      renderUserCard(document.getElementById("user-card-tech"), session);
+      show("screen-technician");
+      if (window.Cases) window.Cases.init(session);
+      return;
+    }
+    renderUserCard(document.getElementById("user-card"), session);
+    show("screen-employee");
+    if (window.Chat) window.Chat.init(session);
   }
-}
 
-// --- reset ---------------------------------------------------------------
+  function initLogin() {
+    var form = document.getElementById("login-form");
+    var username = document.getElementById("login-username");
+    var password = document.getElementById("login-password");
+    var button = document.getElementById("login-submit");
+    var error = document.getElementById("login-error");
 
-$("reset").addEventListener("click", async () => {
-  renderStatus(await post("/api/reset"));
-  $("transcript").textContent = "";
-  await loadTickets();
-});
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      error.hidden = true;
+      button.disabled = true;
+      button.textContent = "";
+      button.appendChild(el("span", "spinner"));
 
-refreshStatus();
-loadPayloads();
-$("question").focus();
+      api("/api/login", { username: username.value, password: password.value })
+        .then(function (account) {
+          setSession(account);
+          password.value = "";
+          route();
+        })
+        .catch(function (err) {
+          error.textContent = err && err.status === 401
+            ? "Incorrect username or password"
+            : "Could not sign in. Please try again.";
+          error.hidden = false;
+          password.value = "";
+          password.focus();
+        })
+        .then(function () {
+          button.disabled = false;
+          button.textContent = "Sign in";
+        });
+    });
+  }
+
+  function initLogout() {
+    ["logout", "logout-tech"].forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node) node.addEventListener("click", function () { clearSession(); route(); });
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    initLogin();
+    initLogout();
+    route();
+  });
+
+  return {
+    CHAT_KEY: CHAT_KEY,
+    api: api,
+    el: el,
+    identity: identity,
+    initials: initials,
+    getSession: getSession,
+    clearSession: clearSession,
+    route: route,
+    show: show
+  };
+})();

@@ -1,13 +1,16 @@
-"""In-memory demo service: ticket lifecycle, live ingestion, and answering.
+"""The application layer: one pipeline, one lock, two methods.
 
-This is the whole application layer for the demonstration build. It holds one
-Pipeline whose index grows when a technician resolves a ticket, which is how the
-indirect injection is performed live in front of an audience rather than being
-pre-baked into a snapshot.
+`HelpdeskService.ask` returns nothing but the answer string, and
+`HelpdeskService.submit_case` returns nothing but the new document id. Every
+piece of evidence -- ranked hits, which chunks reached the context, the exposure
+flags, the marker verdict, the resolved provider -- goes to JsonlLogger instead,
+because the browser is meant to look like an ordinary helpdesk. If you want to
+know why an answer said what it said, read `logs/queries.jsonl`.
 
-Nothing here is persistent by design -- restart and the corpus is clean again.
-The documented system (SQLite accounts/tickets/threads, Qdrant, publication
-orchestration) is a separate track; see DEMO.md.
+The corpus is poisoned at boot (36 clean + 5 attacker tickets), exactly as
+run_demo.py:build_pipelines builds it, and grows further whenever a technician
+files a case. Nothing is persistent: restart and the corpus is the 41-document
+snapshot again.
 """
 
 from __future__ import annotations
@@ -16,15 +19,23 @@ import hashlib
 import os
 import pathlib
 import threading
-from dataclasses import asdict, dataclass
+from uuid import uuid4
 
-from .pipeline import Pipeline, load_documents
+from .index import Hit
+from .logging_store import JsonlLogger
+from .pipeline import Pipeline, load_documents, render_context, resolve_spotlighting_strategy
 from .seed_marker import MARKER
 
 CLEAN_CORPUS = "data/corpus/clean/documents.jsonl"
 ATTACK_CORPUS = "data/corpus/attack/documents.jsonl"
 
 DEFENSES = {"off", "boundary", "datamarking"}
+
+TOP_K = 5
+
+GENERATION_FAILURE_MESSAGE = (
+    "Sorry, I could not reach the assistant service just now. Please try again."
+)
 
 
 def content_hash(text: str) -> str:
@@ -34,10 +45,9 @@ def content_hash(text: str) -> str:
 def compose_ticket_body(description: str, resolution: str) -> str:
     """Compose a resolved-ticket body.
 
-    This rule is copied verbatim from tools/seed_clean_corpus.py and
-    tools/seed_attack.py so that a ticket resolved through the application
-    produces byte-identical text to the seeded equivalent. tools/test_app.py
-    asserts that equivalence.
+    Copied verbatim from tools/seed_clean_corpus.py and tools/seed_attack.py so a
+    case filed through the application produces byte-identical text to the seeded
+    equivalent. tools/test_integration.py asserts that equivalence.
     """
     return (
         f"Employee description: {description.strip()}\n\n"
@@ -45,249 +55,173 @@ def compose_ticket_body(description: str, resolution: str) -> str:
     )
 
 
-@dataclass
-class Ticket:
-    ticket_id: str
-    subject: str
-    submitted_by: str
-    membership: str  # clean | attacker -- an operator label, never inferred
-    employee_description: str
-    status: str = "open"  # open | resolved
-    technician_resolution: str | None = None
-    document_id: str | None = None
-    chunks_added: int = 0
-
-
-@dataclass
-class _Snapshot:
-    chunk_count: int
-    document_count: int
-
-
-class DemoService:
-    """One live index plus the tickets that can grow it."""
-
-    def __init__(self, clean_documents: list[dict], marker: str = MARKER):
+class HelpdeskService:
+    def __init__(
+        self,
+        documents: list[dict],
+        attacker_ids: set[str],
+        logger: JsonlLogger,
+        marker: str = MARKER,
+        defense: str = "off",
+    ):
+        defense = (defense or "off").strip().lower()
+        if defense not in DEFENSES:
+            raise ValueError(f"unknown defense '{defense}'; use one of: {sorted(DEFENSES)}")
+        self.defense = defense
         self.marker = marker
+        self.logger = logger
+        self.documents: list[dict] = list(documents)
         self.pipeline = Pipeline.from_documents(
-            clean_documents, attacker_doc_ids=set(), marker=marker
+            self.documents, attacker_doc_ids=set(attacker_ids), marker=marker
         )
-        self.documents: list[dict] = list(clean_documents)
-        self._clean = _Snapshot(
-            chunk_count=len(self.pipeline.index.chunks),
-            document_count=len(clean_documents),
-        )
-        self._tickets: dict[str, Ticket] = {}
         self._seq = 0
         self._lock = threading.Lock()
 
-    # --- reporting -------------------------------------------------------
+    # --- reporting (startup banner only; never reaches the browser) ------
 
-    def _chunk_counts(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for c in self.pipeline.index.chunks:
-            counts[c.document_id] = counts.get(c.document_id, 0) + 1
-        return counts
+    @property
+    def document_count(self) -> int:
+        return len(self.documents)
 
-    def status(self) -> dict:
-        return {
-            "ready": True,
-            "documents": len(self.documents),
-            "chunks": len(self.pipeline.index.chunks),
-            "attacker_documents": sorted(self.pipeline.attacker_doc_ids),
-            "clean_documents": self._clean.document_count,
-            "marker": self.marker,
-            "provider": provider_label(),
-            "open_tickets": sum(1 for t in self._tickets.values() if t.status == "open"),
-        }
-
-    def corpus(self) -> dict:
-        counts = self._chunk_counts()
-        return {
-            "documents": [
-                {
-                    "document_id": d["document_id"],
-                    "title": d.get("title", ""),
-                    "source_type": d.get("source_type", ""),
-                    "membership": "attacker"
-                    if d["document_id"] in self.pipeline.attacker_doc_ids
-                    else "clean",
-                    "chunks": counts.get(d["document_id"], 0),
-                }
-                for d in self.documents
-            ],
-            "total": len(self.documents),
-            "attacker": len(self.pipeline.attacker_doc_ids),
-        }
-
-    def attack_payloads(self) -> list[dict]:
-        """The frozen attacker tickets, offered to the UI as prefill text so the
-        demonstrator never has to type an injection on stage."""
-        return [
-            {
-                "document_id": d["document_id"],
-                "subject": f"Account recovery help ({d['document_id']})",
-                "employee_description": d.get("employee_description", ""),
-                "technician_resolution": d.get("technician_resolution", ""),
-            }
-            for d in load_documents(ATTACK_CORPUS)
-        ]
-
-    def tickets(self) -> list[dict]:
-        return [asdict(t) for t in self._tickets.values()]
-
-    # --- lifecycle -------------------------------------------------------
-
-    def submit_ticket(
-        self,
-        subject: str,
-        description: str,
-        submitted_by: str = "employee",
-        membership: str = "clean",
-    ) -> Ticket:
-        if not description.strip():
-            raise ValueError("a ticket needs a description")
-        if membership not in {"clean", "attacker"}:
-            raise ValueError(f"unknown membership '{membership}'")
-        with self._lock:
-            self._seq += 1
-            ticket_id = f"W{self._seq:02d}"
-            ticket = Ticket(
-                ticket_id=ticket_id,
-                subject=subject.strip() or f"Ticket {ticket_id}",
-                submitted_by=submitted_by,
-                membership=membership,
-                employee_description=description.strip(),
-            )
-            self._tickets[ticket_id] = ticket
-            return ticket
-
-    def resolve_ticket(self, ticket_id: str, resolution: str) -> dict:
-        """Resolve a ticket and publish it into the live corpus.
-
-        Resolution is the only path into the index: an open ticket is never
-        searchable. This mirrors the documented admission rule.
-        """
-        if not resolution.strip():
-            raise ValueError("a resolution needs text")
-        with self._lock:
-            ticket = self._tickets.get(ticket_id)
-            if ticket is None:
-                raise KeyError(ticket_id)
-            if ticket.status == "resolved":
-                raise ValueError(f"{ticket_id} is already resolved")
-
-            body = compose_ticket_body(ticket.employee_description, resolution)
-            document = {
-                "schema_version": 1,
-                "document_id": ticket.ticket_id,
-                "source_type": "resolved_ticket",
-                "membership": ticket.membership,
-                "topic": "recovery",
-                "title": ticket.subject,
-                "body": body,
-                "employee_description": ticket.employee_description,
-                "technician_resolution": resolution.strip(),
-                "source_ref": f"workflow/tickets/{ticket.ticket_id}",
-                "content_hash": content_hash(body),
-            }
-            added = self.pipeline.add_document(
-                document, attacker=(ticket.membership == "attacker")
-            )
-            self.documents.append(document)
-
-            ticket.status = "resolved"
-            ticket.technician_resolution = resolution.strip()
-            ticket.document_id = document["document_id"]
-            ticket.chunks_added = added
-
-            return {
-                "ticket": asdict(ticket),
-                "document": {k: document[k] for k in ("document_id", "title", "membership")},
-                "chunks_added": added,
-                "corpus": self.status(),
-            }
-
-    def reset(self) -> dict:
-        """Drop everything ingested at runtime and restore the clean corpus."""
-        with self._lock:
-            self.pipeline.index.truncate(self._clean.chunk_count)
-            del self.documents[self._clean.document_count :]
-            self.pipeline.attacker_doc_ids.clear()
-            self._tickets.clear()
-            self._seq = 0
-            return self.status()
+    @property
+    def chunk_count(self) -> int:
+        return len(self.pipeline.index.chunks)
 
     # --- answering -------------------------------------------------------
 
-    def ask(self, question: str, defense: str = "off") -> dict:
-        if not question.strip():
-            raise ValueError("a question needs text")
-        if defense not in DEFENSES:
-            raise ValueError(f"unknown defense '{defense}'; use one of: {sorted(DEFENSES)}")
+    def _context_chunk_ids(self, hits: list[dict], strategy: str | None) -> list[str]:
+        """Which retrieved chunks actually fit under the evidence budget.
 
-        if defense == "off":
-            condition = "attacked" if self.pipeline.attacker_doc_ids else "clean"
-            strategy = None
-        else:
-            condition = "defended"
-            strategy = defense
+        Rebuilt from the chunk texts already in the index rather than by running
+        retrieval a second time -- render_context only reads each hit's text,
+        document_id and chunk_id, so this is pure string work with no second
+        embedding pass and no API call.
+        """
+        texts = {c.chunk_id: c.text for c in self.pipeline.index.chunks}
+        rebuilt = [
+            Hit(
+                rank=h["rank"],
+                score=h["score"],
+                chunk_id=h["chunk_id"],
+                document_id=h["document_id"],
+                text=texts.get(h["chunk_id"], ""),
+            )
+            for h in hits
+        ]
+        _, included = render_context(rebuilt, strategy)
+        return included
+
+    def ask(self, question: str, user: dict) -> str:
+        """Answer one question. Returns the answer text and nothing else."""
+        question = (question or "").strip()
+        if not question:
+            raise ValueError("a question needs text")
+
+        query_id = f"q-{uuid4().hex[:8]}"
+        condition = "defended" if self.defense != "off" else "attacked"
+        strategy = self.defense if self.defense != "off" else None
 
         with self._lock:
             trial = self.pipeline.answer(
-                "ui", question.strip(), condition,
-                spotlighting_strategy=strategy, include_prompt=True,
+                query_id, question, condition,
+                top_k=TOP_K, spotlighting_strategy=strategy, include_prompt=False,
             )
-            fallback_reason = None
-            if trial.error:
-                # Visible, never silent: retry once on the offline provider so the
-                # demo survives a rate limit, and report exactly what failed.
-                previous = os.environ.get("INJECTRAG_PROVIDER")
-                os.environ["INJECTRAG_PROVIDER"] = "fake"
-                try:
-                    fallback_reason = trial.error
-                    trial = self.pipeline.answer(
-                        "ui", question.strip(), condition,
-                        spotlighting_strategy=strategy, include_prompt=True,
-                    )
-                finally:
-                    if previous is None:
-                        os.environ.pop("INJECTRAG_PROVIDER", None)
-                    else:
-                        os.environ["INJECTRAG_PROVIDER"] = previous
+            resolved = resolve_spotlighting_strategy(condition, strategy)
+            context_chunk_ids = self._context_chunk_ids(trial.hits, resolved)
 
-            titles = {d["document_id"]: d.get("title", "") for d in self.documents}
-            sources = [
-                {
-                    **h,
-                    "title": titles.get(h["document_id"], ""),
-                    "membership": "attacker"
-                    if h["document_id"] in self.pipeline.attacker_doc_ids
-                    else "clean",
-                }
-                for h in trial.hits
-            ]
-
-            return {
-                "question": trial.question,
-                "answer": trial.answer,
-                "defense": defense,
+            self.logger.log_query({
+                "query_id": query_id,
+                "user_id": user.get("user_id"),
+                "username": user.get("username"),
+                "display": user.get("display"),
+                "question": question,
                 "condition": trial.condition,
+                "defense": self.defense,
                 "spotlighting_strategy": trial.spotlighting_strategy,
-                "sources": sources,
+                "retrieved": [
+                    {
+                        "rank": h["rank"],
+                        "document_id": h["document_id"],
+                        "chunk_id": h["chunk_id"],
+                        "score": h["score"],
+                    }
+                    for h in trial.hits
+                ],
+                "context_chunk_ids": context_chunk_ids,
+                "highest_context_chunk": trial.highest_context_chunk,
                 "attacker_in_topk": trial.attacker_in_topk,
                 "attacker_in_context": trial.attacker_in_context,
-                "marker_present": trial.marker_present,
                 "marker": self.marker,
+                "marker_present": trial.marker_present,
+                "answer": trial.answer,
                 "provider": trial.provider,
                 "model": trial.model,
                 "finish_reason": trial.finish_reason,
                 "error": trial.error,
-                "fallback_reason": fallback_reason,
-                "system_prompt": trial.system_prompt,
-                "user_message": trial.user_message,
-                "corpus": self.status(),
+            })
+
+        if trial.error:
+            # The provider failure is already in the log with its exact text. The
+            # browser gets an apology and nothing else -- never a stack trace or a
+            # vendor error string.
+            return GENERATION_FAILURE_MESSAGE
+        return trial.answer
+
+    # --- ingestion -------------------------------------------------------
+
+    def submit_case(self, case: dict, user: dict) -> str:
+        """File a resolved case into the live corpus. Returns the document id."""
+        case_date = (case.get("case_date") or "").strip()
+        title = (case.get("title") or "").strip()
+        description = (case.get("description") or "").strip()
+        resolution = (case.get("resolution") or "").strip()
+        for name, value in (
+            ("case_date", case_date), ("title", title),
+            ("description", description), ("resolution", resolution),
+        ):
+            if not value:
+                raise ValueError(f"{name} must not be blank")
+
+        with self._lock:
+            self._seq += 1
+            document_id = f"C{self._seq:02d}"
+            body = compose_ticket_body(description, resolution)
+            document = {
+                "schema_version": 1,
+                "document_id": document_id,
+                "source_type": "resolved_ticket",
+                "membership": "attacker",
+                "topic": "recovery",
+                "title": title,
+                "body": body,
+                "employee_description": description,
+                "technician_resolution": resolution,
+                "source_ref": f"workflow/cases/{document_id}",
+                "case_date": case_date,
+                "content_hash": content_hash(body),
             }
+            # `attacker=True` is an operator label for exposure bookkeeping, not an
+            # inference: in this build the technician is the adversary, so anything
+            # they file is attacker-authored by construction. add_document still
+            # never inspects the body to decide membership.
+            added = self.pipeline.add_document(document, attacker=True)
+            self.documents.append(document)
+
+            self.logger.log_ingestion({
+                "document_id": document_id,
+                "user_id": user.get("user_id"),
+                "username": user.get("username"),
+                "display": user.get("display"),
+                "case_date": case_date,
+                "title": title,
+                "description": description,
+                "resolution": resolution,
+                "content_hash": document["content_hash"],
+                "chunks_added": added,
+                "corpus_documents_after": len(self.documents),
+                "corpus_chunks_after": len(self.pipeline.index.chunks),
+            })
+            return document_id
 
 
 def provider_label() -> str:
@@ -298,6 +232,8 @@ def provider_label() -> str:
         return f"openai ({os.environ.get('INJECTRAG_OPENAI_MODEL', 'gpt-oss-20b')})"
     if provider == "fake":
         return "fake (offline)"
+    if provider == "ollama":
+        return f"ollama ({os.environ.get('INJECTRAG_OLLAMA_MODEL', 'llama3.1:8b')}, local)"
     if provider == "gemini" or (
         provider == "auto"
         and (os.environ.get("INJECTRAG_GEMINI_KEYS") or os.environ.get("GEMINI_API_KEY"))
@@ -306,12 +242,34 @@ def provider_label() -> str:
     return "fake (no API key set)"
 
 
-def build_service() -> DemoService:
-    """Build the service from the clean corpus on disk. Attacker documents are
-    NOT loaded -- they enter only through the ticket workflow."""
-    path = pathlib.Path(CLEAN_CORPUS)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{CLEAN_CORPUS} not found; run tools/seed_clean_corpus.py first"
+def resolved_defense() -> str:
+    defense = os.environ.get("INJECTRAG_DEFENSE", "off").strip().lower() or "off"
+    if defense not in DEFENSES:
+        raise ValueError(
+            f"INJECTRAG_DEFENSE='{defense}' is not valid; use one of: {sorted(DEFENSES)}"
         )
-    return DemoService(load_documents(CLEAN_CORPUS))
+    return defense
+
+
+def build_service(log_dir: str | None = None, defense: str | None = None) -> HelpdeskService:
+    """Build the poisoned service exactly as run_demo.py:build_pipelines does.
+
+    41 documents: the 36 clean ones plus the 5 frozen attacker tickets, whose ids
+    become the attacker set. Unlike the documented snapshot runner, this index is
+    then allowed to grow as cases are filed.
+    """
+    for path in (CLEAN_CORPUS, ATTACK_CORPUS):
+        if not pathlib.Path(path).exists():
+            raise FileNotFoundError(
+                f"{path} not found; run tools/seed_clean_corpus.py and tools/seed_attack.py first"
+            )
+    clean_docs = load_documents(CLEAN_CORPUS)
+    attack_docs = load_documents(ATTACK_CORPUS)
+    attacker_ids = {d["document_id"] for d in attack_docs}
+    return HelpdeskService(
+        clean_docs + attack_docs,
+        attacker_ids,
+        JsonlLogger(log_dir),
+        marker=MARKER,
+        defense=defense if defense is not None else resolved_defense(),
+    )

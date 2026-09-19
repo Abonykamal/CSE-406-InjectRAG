@@ -1,0 +1,37 @@
+services:
+  app:
+    build: .
+    ports: ["8000:8000"]
+    # Optional: without it the app still boots (offline, scripted answers).
+    # Create it with `cp .env.example .env` and paste GROQ_API_KEY for real ones.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      INJECTRAG_PROVIDER: groq
+      INJECTRAG_GROQ_MODEL: openai/gpt-oss-20b
+      # The defense is server configuration, not a UI control.
+      # off | boundary | datamarking -- edit, then `docker compose up -d`.
+      INJECTRAG_DEFENSE: "off"
+      # Load-bearing, not decoration. generation.py defaults the inter-call gap
+      # to 30 s and retry-forever to on -- batch-run values that would stall
+      # every chat message for half a minute and hang the browser indefinitely
+      # on a rate limit. Setting them here also sidesteps import ordering.
+      INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS: "2"
+      INJECTRAG_OPENAI_RETRY_FOREVER: "0"
+      INJECTRAG_OPENAI_MAX_RETRIES: "1"
+      INJECTRAG_LOG_DIR: /app/logs
+      FASTEMBED_CACHE_PATH: /app/.model-cache
+    volumes:
+      # The evidence trail must not live in disposable container state.
+      - ./logs:/app/logs
+      - model-cache:/app/.model-cache
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+volumes:
+  model-cache:
