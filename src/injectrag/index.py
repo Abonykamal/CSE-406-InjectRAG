@@ -86,6 +86,25 @@ class ChunkIndex:
         self.chunks = self.chunks[:n]
         self._matrix = None if n == 0 else self._matrix[:n]
 
+    def prefix_view(self, n: int) -> "ChunkIndex":
+        """A second index over the first n chunks, reusing their vectors.
+
+        Documents are embedded in the order they were indexed, so when the clean
+        corpus is loaded before the attacker tickets the clean chunks are a prefix
+        of this index. Slicing that prefix gives a complete clean index without a
+        second embedding pass -- the whole reason switching corpus at runtime is
+        free. The returned index owns its own chunk list and matrix slice, so
+        adding to either index afterwards leaves the other untouched.
+        """
+        if self._matrix is None:
+            raise RuntimeError("index not built")
+        if n < 0 or n > len(self.chunks):
+            raise ValueError(f"cannot take a prefix of {n} from {len(self.chunks)} chunks")
+        view = ChunkIndex(self.model_name)
+        view.chunks = list(self.chunks[:n])
+        view._matrix = self._matrix[:n].copy()
+        return view
+
     def search(self, question: str, top_k: int = 5) -> list[Hit]:
         if self._matrix is None:
             raise RuntimeError("index not built")

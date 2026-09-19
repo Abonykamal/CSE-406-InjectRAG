@@ -10,13 +10,19 @@ services:
     environment:
       INJECTRAG_PROVIDER: groq
       INJECTRAG_GROQ_MODEL: openai/gpt-oss-20b
-      # The defense is server configuration, not a UI control.
-      # off | boundary | datamarking -- edit, then `docker compose up -d`.
-      INJECTRAG_DEFENSE: "off"
+      # What a conversation STARTS on. With INJECTRAG_DEMO_CONTROLS=1 (the
+      # default) the browser can change both per conversation -- no restart
+      # needed to ask the same question again with the defense on.
+      INJECTRAG_DEFENSE: "off"          # off | boundary | datamarking
+      INJECTRAG_CORPUS: "poisoned"      # poisoned | clean
+      # 0 hides the selects and pins every request to the two values above.
+      INJECTRAG_DEMO_CONTROLS: "1"
       # Load-bearing, not decoration. generation.py defaults the inter-call gap
       # to 30 s and retry-forever to on -- batch-run values that would stall
       # every chat message for half a minute and hang the browser indefinitely
       # on a rate limit. Setting them here also sidesteps import ordering.
+      # Greedy decoding, so the same question gives the same answer run to run.
+      INJECTRAG_OPENAI_TEMPERATURE: "0"
       INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS: "2"
       INJECTRAG_OPENAI_RETRY_FOREVER: "0"
       INJECTRAG_OPENAI_MAX_RETRIES: "1"

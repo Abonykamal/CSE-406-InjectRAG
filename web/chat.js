@@ -3,7 +3,14 @@
  * An assistant turn contains the answer text and nothing else: no sources, no
  * scores, no condition label, no marker banner. That is the point of the build --
  * the attack has to be visible as ordinary helpdesk advice, and the evidence for
- * it lives in logs/queries.jsonl, not on screen. */
+ * it lives in logs/queries.jsonl, not on screen.
+ *
+ * A conversation is purely client-side: history is never sent, and the server
+ * holds no thread state, so the same question asked in a new chat is identical
+ * server-side. That is what makes "ask it again with the defense on" a clean
+ * comparison. Each conversation carries an id (logged, so the pair of runs can
+ * be found) and a generation token (so a reply from a conversation the employee
+ * has already left is discarded rather than landing in the new one). */
 
 window.Chat = (function () {
   "use strict";
@@ -13,6 +20,48 @@ window.Chat = (function () {
   var session = null;
   var inflight = false;
   var wired = false;
+  var conversationId = null;
+  /* Bumped by newChat(). A reply whose token no longer matches is dropped. */
+  var generation = 0;
+  var bar, defenseSel, corpusSel, lockNote;
+
+  function newConversationId() {
+    return "c-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  }
+
+  /* The selects are live only before a conversation's first message: one
+     condition per chat, which is the comparison the demo is built around.
+     Changing it mid-thread would make the transcript unreadable as evidence. */
+  function setLocked(locked) {
+    if (!bar || bar.hidden) return;
+    if (defenseSel) defenseSel.disabled = locked;
+    if (corpusSel) corpusSel.disabled = locked;
+    if (lockNote) lockNote.hidden = !locked;
+  }
+
+  function applyConfig(cfg) {
+    bar = document.getElementById("demo-bar");
+    defenseSel = document.getElementById("demo-defense");
+    corpusSel = document.getElementById("demo-corpus");
+    lockNote = document.getElementById("demo-locked");
+    if (!bar) return;
+    bar.hidden = !cfg.controls;
+    if (!cfg.controls) return;
+    if (defenseSel) defenseSel.value = cfg.defense;
+    if (corpusSel) corpusSel.value = cfg.corpus;
+    setLocked(loadHistory().length > 0);
+  }
+
+  /* What this conversation runs under. Omitted entirely when the controls are
+     off, so the server falls back to its own configuration. */
+  function conditionFields() {
+    var cfg = App.config();
+    if (!cfg.controls) return {};
+    return {
+      defense: defenseSel ? defenseSel.value : cfg.defense,
+      corpus: corpusSel ? corpusSel.value : cfg.corpus
+    };
+  }
 
   function loadHistory() {
     try {
@@ -116,17 +165,30 @@ window.Chat = (function () {
 
   function ask(question) {
     var body = addRow("assistant", typingNode());
+    var token = generation;
     setInflight(true);
-    App.api("/api/chat", Object.assign({ question: question }, App.identity()))
+    if (!conversationId) conversationId = newConversationId();
+    var payload = Object.assign(
+      { question: question, conversation_id: conversationId },
+      App.identity(),
+      conditionFields()
+    );
+    App.api("/api/chat", payload)
       .then(function (data) {
+        // The employee started a new chat while this was in flight. The answer
+        // belongs to a conversation that no longer exists on screen -- showing
+        // it, or writing it to history, would attribute it to the new one.
+        if (token !== generation) return;
         var answer = (data && data.answer) || "";
         setBody(body, document.createTextNode(answer));
         appendHistory("assistant", answer);
       })
       .catch(function () {
+        if (token !== generation) return;
         failure(body, question);
       })
       .then(function () {
+        if (token !== generation) return;
         setInflight(false);
       });
   }
@@ -136,6 +198,7 @@ window.Chat = (function () {
     if (!question || inflight) return;
     addRow("user", document.createTextNode(question));
     appendHistory("user", question);
+    setLocked(true);
     input.value = "";
     autoGrow();
     ask(question);
@@ -153,10 +216,17 @@ window.Chat = (function () {
   }
 
   function newChat() {
+    // Invalidate anything still in flight before clearing, so a late reply from
+    // the previous conversation cannot land in this one.
+    generation += 1;
+    inflight = false;
+    conversationId = newConversationId();
     saveHistory([]);
     replay();
+    setLocked(false);
     input.value = "";
     autoGrow();
+    setInflight(false);
     input.focus();
   }
 
@@ -195,6 +265,7 @@ window.Chat = (function () {
 
   function init(activeSession) {
     session = activeSession;
+    if (!conversationId) conversationId = newConversationId();
     transcript = document.getElementById("transcript");
     emptyState = document.getElementById("empty-state");
     form = document.getElementById("composer");
@@ -202,10 +273,11 @@ window.Chat = (function () {
     sendBtn = document.getElementById("send");
     if (!wired) { wire(); wired = true; }
     replay();
+    applyConfig(App.config());
     autoGrow();
     setInflight(false);
     input.focus();
   }
 
-  return { init: init };
+  return { init: init, applyConfig: applyConfig };
 })();

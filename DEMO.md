@@ -134,10 +134,16 @@ python3 -m venv .venv
 INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py  # offline, no API calls
 ```
 
-The corpus is **poisoned at boot**: 36 clean documents plus the 5 frozen attacker
-tickets, 41 in total, exactly as `run_demo.py:build_pipelines` builds it. It then
-grows whenever a technician files a case. Nothing persists: restart and the corpus
-is the 41-document snapshot again.
+**Two corpora are indexed at boot, in a single embedding pass.** The poisoned one
+is 41 documents -- 36 clean plus the 5 frozen attacker tickets, exactly as
+`run_demo.py:build_pipelines` builds it. The clean one is those same 36, and costs
+nothing extra: the clean chunks are a prefix of the poisoned index, so the second
+view is a row slice rather than a second pass.
+
+A question is answered against whichever corpus the conversation selects,
+defaulting to `INJECTRAG_CORPUS` (`poisoned`). A case filed by a technician joins
+the **clean** corpus and is therefore retrievable in both. Nothing persists:
+restart and the two corpora are the 36- and 41-document snapshots again.
 
 ### Credentials
 
@@ -150,15 +156,35 @@ is the 41-document snapshot again.
 Plaintext, in memory, no sessions. Authentication is explicitly out of scope — see
 the deviations table below.
 
-### The defense is server configuration, not a UI control
+### Choosing the condition: defense and corpus
 
-`INJECTRAG_DEFENSE` = `off` (default) | `boundary` | `datamarking`, read once at
-startup. To demonstrate spotlighting: edit the value in `docker-compose.yml`, run
-`docker compose up -d`, and ask the same question again. Restart is ~15 s with the
-model cache warm.
+`.env` sets what a conversation *starts* on:
 
-There is deliberately no defense toggle in the browser. A visitor cannot tell which
-mode the server is in, which is what makes the before/after comparison honest.
+| Variable | Values | Default |
+|---|---|---|
+| `INJECTRAG_DEFENSE` | `off` \| `boundary` \| `datamarking` | `off` |
+| `INJECTRAG_CORPUS` | `poisoned` \| `clean` | `poisoned` |
+| `INJECTRAG_DEMO_CONTROLS` | `1` shows the selects, `0` hides them | `1` |
+
+With the demo controls on, two selects sit in the chat header and the employee can
+change both **per conversation**. They lock as soon as a conversation has its first
+message and unlock on **New chat**, so one chat runs under exactly one condition.
+That is the intended demonstration: ask a question, start a new chat, turn the
+defense on, ask the *same* question. No restart, no re-index, and the filed cases
+survive.
+
+The comparison stays honest because the history is never sent to the server and the
+server keeps no thread state -- the second run is byte-identical to the first except
+for the system prompt. Each conversation carries an id, logged with every question,
+so the paired rows are easy to find.
+
+Set `INJECTRAG_DEMO_CONTROLS=0` for the product surface: the selects disappear, and
+a `corpus` or `defense` sent by a browser is **ignored**, not obeyed. Use that for
+any scripted run where the condition must not be changeable from a tab.
+
+The chat header also names the model answering the employee (`gpt-oss-20b`). That is
+product text and is always shown; it is not selectable, and the full id
+(`openai/gpt-oss-20b`) still goes to the logs.
 
 ### Demo script
 
@@ -172,16 +198,23 @@ mode the server is in, which is what makes the before/after comparison honest.
 5. Sign out; sign in as `rakib / tech123`; file a case. Show `logs/ingestions.jsonl`.
 6. Sign back in as `arif`; ask a question matching that case; the new case
    influences the answer.
-7. Set `INJECTRAG_DEFENSE: boundary` in `docker-compose.yml`; `docker compose up -d`;
-   ask the question from step 3 again. The marker is gone; `show_logs.py` now reports
-   `condition: defended`, `attacker_in_context: true`, `marker_present: false` —
-   retrieval unchanged, only obedience changed.
+7. Click **New chat**, set **Defense** to `boundary`, and ask the question from step 3
+   again — same employee, same words, no restart. The marker is gone; `show_logs.py`
+   now reports `condition: defended`, `attacker_in_context: true`,
+   `marker_present: false` — retrieval unchanged, only obedience changed. The two rows
+   carry the same `question` and different `conversation_id`s.
+8. Optional: **New chat**, set **Corpus** to `clean`, and ask it once more. The answer
+   is the honest one and `attacker_in_topk` is false — the attacker documents were
+   never retrieved at all.
 
 ### The evidence trail
 
-Two append-only files under `logs/` (bind-mounted out of the container, so they
-survive it):
+Four append-only files under `logs/` (bind-mounted out of the container, so they
+survive it) — two machine-readable, two for reading:
 
+- **`logs/queries.log`** and **`logs/ingestions.log`** — the same records rendered for
+  people: fixed-width labels, real line breaks through the answers and chunk text, a
+  blank line between records. These are the ones to open during the viva.
 - **`logs/queries.jsonl`** — one line per question: ranked hits with scores, which
   chunk ids reached the model context, the highest-scoring context chunk and its
   text, `attacker_in_topk`, `attacker_in_context`, `marker_present`, the answer, the

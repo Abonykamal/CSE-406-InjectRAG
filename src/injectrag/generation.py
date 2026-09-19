@@ -24,12 +24,20 @@ logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 _GEMINI_MODEL = os.environ.get("INJECTRAG_GEMINI_MODEL", "gemini-3.8-flash")
 _GEMINI_TIMEOUT_SECONDS = float(os.environ.get("INJECTRAG_GEMINI_TIMEOUT_SECONDS", "90"))
 _GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("INJECTRAG_GEMINI_MAX_OUTPUT_TOKENS", "1024"))
+_GEMINI_TEMPERATURE = float(os.environ.get("INJECTRAG_GEMINI_TEMPERATURE", "0"))
 _GEMINI_MIN_KEY_GAP_SECONDS = float(os.environ.get("INJECTRAG_GEMINI_MIN_KEY_GAP_SECONDS", "4.5"))
 _GEMINI_MAX_RETRIES = int(os.environ.get("INJECTRAG_GEMINI_MAX_RETRIES", "20"))
 _GEMINI_RETRY_FOREVER = os.environ.get("INJECTRAG_GEMINI_RETRY_FOREVER", "1") == "1"
 _OPENAI_MODEL = os.environ.get("INJECTRAG_OPENAI_MODEL", "gpt-oss-20b")
 _OPENAI_TIMEOUT_SECONDS = float(os.environ.get("INJECTRAG_OPENAI_TIMEOUT_SECONDS", "90"))
 _OPENAI_MAX_OUTPUT_TOKENS = int(os.environ.get("INJECTRAG_OPENAI_MAX_OUTPUT_TOKENS", "1024"))
+# Greedy decoding by default. The provider default is 1.0, which resamples every
+# answer and makes a demo -- and any reported number -- irreproducible run to
+# run. Groq's Responses API takes temperature and top_p but NOT seed, and even
+# its chat-completions seed is documented as best-effort, so 0.0 is as pinned as
+# this provider gets: highly stable, not bit-identical (gpt-oss-20b is MoE and
+# served in batches). Raise it deliberately if you ever want to report variance.
+_OPENAI_TEMPERATURE = float(os.environ.get("INJECTRAG_OPENAI_TEMPERATURE", "0"))
 _OPENAI_MIN_CALL_GAP_SECONDS = float(os.environ.get("INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS", "30"))
 _OPENAI_MAX_RETRIES = int(os.environ.get("INJECTRAG_OPENAI_MAX_RETRIES", "20"))
 _OPENAI_RETRY_FOREVER = os.environ.get("INJECTRAG_OPENAI_RETRY_FOREVER", "1") == "1"
@@ -219,6 +227,7 @@ def _try_gemini_slot(slot: int, key: str, system_instruction: str, user_message:
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             max_output_tokens=_GEMINI_MAX_OUTPUT_TOKENS,
+            temperature=_GEMINI_TEMPERATURE,
             http_options=types.HttpOptions(timeout=_GEMINI_TIMEOUT_SECONDS * 1000),
         ),
     )
@@ -394,6 +403,8 @@ def _compatible_generate(provider: str, system_instruction: str, user_message: s
                     {"role": "user", "content": user_message},
                 ],
                 max_output_tokens=_OPENAI_MAX_OUTPUT_TOKENS,
+                temperature=_OPENAI_TEMPERATURE,
+                top_p=1.0,
             )
             return Generation(
                 text=(response.output_text or "").strip(),

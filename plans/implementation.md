@@ -45,14 +45,20 @@ attacker_ids = {d["document_id"] for d in attack_docs}                # P01..P05
 pipeline = Pipeline.from_documents(clean_docs + attack_docs, attacker_ids, MARKER)   # 41 docs
 ```
 
-There is no second "clean" pipeline in the app — nothing consumes it now that the knowledge-base
-selector is gone. The clean-vs-attacked-vs-defended comparison is the job of `run_demo.py`, which
-already produces it into `results/`.
+**Superseded 2026-09-19** (see [`plans/corpus-and-defense-toggle.md`](corpus-and-defense-toggle.md)).
+This section originally said there was no second "clean" pipeline in the app, and that the defense
+was startup-only configuration. Both changed:
 
-**Defense is server configuration, not a UI control.** `INJECTRAG_DEFENSE` = `off` (default) |
-`boundary` | `datamarking`, read once at startup. To demonstrate spotlighting: edit the value in
-`docker-compose.yml`, run `docker compose up -d`, ask the same question again. Restart is ~15 s with
-the model cache warm.
+- The app now holds **two pipelines**, `clean` and `poisoned`. The clean one is a prefix slice of
+  the poisoned index, so it costs no second embedding pass. `run_demo.py` still owns the batch
+  three-condition comparison into `results/`; this is the live one.
+- `INJECTRAG_DEFENSE` (`off` | `boundary` | `datamarking`) and `INJECTRAG_CORPUS`
+  (`poisoned` | `clean`) set what a conversation **starts** on. With `INJECTRAG_DEMO_CONTROLS=1`
+  (the default) two selects in the chat header change both **per conversation**; they lock on a
+  conversation's first message and unlock on **New chat**. No restart, no re-index.
+- With `INJECTRAG_DEMO_CONTROLS=0` the selects disappear and a `corpus`/`defense` sent by a browser
+  is **ignored**, restoring the product surface this plan asks for.
+- The chat header names the model (`gpt-oss-20b`) as product text. It is display-only.
 
 ---
 
@@ -440,6 +446,8 @@ services:
       INJECTRAG_PROVIDER: groq
       INJECTRAG_GROQ_MODEL: openai/gpt-oss-20b
       INJECTRAG_DEFENSE: "off"          # off | boundary | datamarking
+      INJECTRAG_CORPUS: "poisoned"      # poisoned | clean
+      INJECTRAG_DEMO_CONTROLS: "1"      # 0 hides the selects and pins both
       INJECTRAG_OPENAI_MIN_CALL_GAP_SECONDS: "2"
       INJECTRAG_OPENAI_RETRY_FOREVER: "0"
       INJECTRAG_OPENAI_MAX_RETRIES: "1"
@@ -513,7 +521,8 @@ Offline (`INJECTRAG_PROVIDER=fake`), through `fastapi.testclient.TestClient`, in
 `check(name, cond)` style of `tools/smoke_test.py`. Point `INJECTRAG_LOG_DIR` at a temp directory.
 
 **Boot**
-1. The service starts with 41 documents and 5 attacker ids (`P01`–`P05`).
+1. The service starts with 41 documents and 5 attacker ids (`P01`–`P05`), and a clean corpus of
+   36 sharing the same index.
 
 **Login**
 2. `rakib`/`tech123` → 200, `role == "technician"`.
@@ -560,7 +569,7 @@ docker compose up --build -d
 docker compose ps                     # healthy
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/
 docker compose exec app python tools/test_integration.py
-ls logs/                              # queries.jsonl, ingestions.jsonl on the host
+ls logs/                              # queries.jsonl, ingestions.jsonl + the .log renderings
 ```
 
 **Browser walkthrough** — record what you *observe*:
@@ -583,7 +592,7 @@ reflects it. Then on the terminal: `python tools/show_logs.py queries --limit 3`
    `attacker_in_context: true`, `marker_present: true`.
 5. Sign out; sign in as `rakib / tech123`; file a case. Show `logs/ingestions.jsonl`.
 6. Sign back in as `arif`; ask a matching question; the new case influences the answer.
-7. Set `INJECTRAG_DEFENSE: boundary` in `docker-compose.yml`; `docker compose up -d`; ask the
+7. Click **New chat**, set **Defense** to `boundary`, and ask the
    question from step 3 again. The marker is gone; `show_logs.py` now reports
    `condition: defended`, `attacker_in_context: true`, `marker_present: false` — retrieval unchanged,
    only obedience changed.

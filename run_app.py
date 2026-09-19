@@ -4,9 +4,13 @@
     .venv/bin/python run_app.py --host 0.0.0.0 --port 8000
     INJECTRAG_PROVIDER=fake .venv/bin/python run_app.py   # offline, no API calls
 
-The corpus is poisoned at boot: 36 clean documents plus the 5 frozen attacker
-tickets. The defense is server configuration, not a UI control -- set
-INJECTRAG_DEFENSE to off | boundary | datamarking and restart.
+Two corpora are indexed at boot in one embedding pass: the clean 36 documents,
+and the poisoned 41 (clean plus the 5 frozen attacker tickets). INJECTRAG_CORPUS
+and INJECTRAG_DEFENSE set what a conversation starts on; with
+INJECTRAG_DEMO_CONTROLS=1 (the default) the browser can change both per
+conversation, so the same question can be re-asked with the defense on without
+a restart. Set INJECTRAG_DEMO_CONTROLS=0 to hide the controls and pin every
+request to this configuration.
 
 Nothing about retrieval, exposure or the marker appears in the browser. Read
 logs/queries.jsonl, or `python tools/show_logs.py queries`, for the evidence.
@@ -52,7 +56,13 @@ os.environ.setdefault("INJECTRAG_GEMINI_RETRY_FOREVER", "0")
 os.environ.setdefault("INJECTRAG_GEMINI_MAX_RETRIES", "1")
 
 from injectrag.api import create_app  # noqa: E402
-from injectrag.service import build_service, provider_label, resolved_defense  # noqa: E402
+from injectrag.service import (  # noqa: E402
+    build_service,
+    demo_controls_enabled,
+    provider_label,
+    resolved_corpus,
+    resolved_defense,
+)
 
 if __name__ == "__main__":
     import uvicorn
@@ -64,10 +74,15 @@ if __name__ == "__main__":
 
     print("Indexing the corpus (first run loads the ONNX model, ~25 s)...", flush=True)
     service = build_service()
-    print(f"  {service.document_count} documents, {service.chunk_count} chunks indexed", flush=True)
+    print(f"  poisoned corpus: {service.document_count} documents, "
+          f"{service.chunk_count} chunks", flush=True)
+    print(f"  clean corpus:    {service.clean_document_count} documents, "
+          f"{len(service.pipelines['clean'].index.chunks)} chunks", flush=True)
     print(f"  attacker documents: {', '.join(sorted(service.pipeline.attacker_doc_ids))}", flush=True)
     print(f"  provider: {provider_label()}", flush=True)
-    print(f"  defense: {resolved_defense()}", flush=True)
+    print(f"  starts on: corpus={resolved_corpus()} defense={resolved_defense()}", flush=True)
+    print(f"  demo controls: {'on (the browser can change both)' if demo_controls_enabled() else 'off (pinned to .env)'}",
+          flush=True)
     print(f"  log directory: {service.logger.log_dir}", flush=True)
     print(f"\nOpen http://{args.host}:{args.port}\n", flush=True)
 

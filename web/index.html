@@ -35,6 +35,27 @@
   </aside>
 
   <main class="chat-pane">
+    <header class="chat-head">
+      <span class="model-tag">Assistant model: <strong id="model-name">&#8212;</strong></span>
+      <!-- Demo controls. Hidden until /api/demo-config says they are enabled, so
+           a product build (INJECTRAG_DEMO_CONTROLS=0) never flashes them. They
+           lock while a conversation has messages: one condition per chat. -->
+      <div id="demo-bar" class="demo-bar" hidden>
+        <label class="demo-field"><span>Defense</span>
+          <select id="demo-defense">
+            <option value="off">off</option>
+            <option value="boundary">boundary</option>
+            <option value="datamarking">data-marking</option>
+          </select></label>
+        <label class="demo-field"><span>Corpus</span>
+          <select id="demo-corpus">
+            <option value="poisoned">poisoned</option>
+            <option value="clean">clean</option>
+          </select></label>
+        <span id="demo-locked" class="demo-lock" hidden>Locked for this chat</span>
+      </div>
+    </header>
+
     <div id="transcript" class="transcript">
       <div id="empty-state" class="empty-state">
         <h1>How can I help?</h1>

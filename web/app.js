@@ -12,6 +12,11 @@ var App = (function () {
   var SESSION_KEY = "injectrag.session";
   var CHAT_KEY = "injectrag.chat";
 
+  /* Server-declared page configuration: the model name to show the employee,
+     and whether the browser may choose the corpus and the defense. Fetched once
+     at load. Defaults keep the page usable if the request fails. */
+  var config = { controls: false, corpus: "poisoned", defense: "off", model: "" };
+
   function getSession() {
     try {
       var raw = window.localStorage.getItem(SESSION_KEY);
@@ -50,6 +55,13 @@ var App = (function () {
     if (cls) node.className = cls;
     if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
+  }
+
+  function getJSON(path) {
+    return fetch(path, { headers: { Accept: "application/json" } }).then(function (res) {
+      if (!res.ok) throw new Error("Request failed");
+      return res.json();
+    });
   }
 
   function api(path, body) {
@@ -158,15 +170,33 @@ var App = (function () {
     });
   }
 
+  /* The model name is product text, shown whether or not the demo controls
+     are enabled -- the employee is always told which assistant answered. */
+  function applyConfig(cfg) {
+    config = {
+      controls: !!(cfg && cfg.controls),
+      corpus: (cfg && cfg.corpus) || "poisoned",
+      defense: (cfg && cfg.defense) || "off",
+      model: (cfg && cfg.model) || ""
+    };
+    var name = document.getElementById("model-name");
+    if (name) name.textContent = config.model || "unavailable";
+    if (window.Chat) window.Chat.applyConfig(config);
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initLogin();
     initLogout();
     route();
+    getJSON("/api/demo-config").then(applyConfig).catch(function () {
+      /* Leave the defaults: the chat still works, the controls stay hidden. */
+    });
   });
 
   return {
     CHAT_KEY: CHAT_KEY,
     api: api,
+    config: function () { return config; },
     el: el,
     identity: identity,
     initials: initials,
